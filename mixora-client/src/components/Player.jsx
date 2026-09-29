@@ -3,11 +3,9 @@ import { useApp } from "../state/context.js";
 import { duration, trackKey } from "../lib/library.js";
 import Icon from "./Icon.jsx";
 import { Cover, IconButton } from "./Primitives.jsx";
-import SoundSettings from "./SoundSettings.jsx";
 import FullscreenPlayer from "./FullscreenPlayer.jsx";
 export default function Player() {
   const a = useApp();
-  const [sound, setSound] = useState(false);
   const [tint, setTint] = useState("");
   useEffect(() => {
     const artwork = a.current?.artwork;
@@ -100,19 +98,10 @@ export default function Player() {
           )}
         </div>
         {a.current && (
-          <>
-            <IconButton
-              icon={liked ? "liked_xs" : "like_xs"}
-              label="Нравится текущий трек"
-              active={liked}
-              onClick={() => a.toggleLike(a.current)}
-            />
-            <IconButton
-              icon="dislike_xs"
-              label="Не нравится текущий трек"
-              onClick={() => a.dislike(a.current)}
-            />
-          </>
+          <IconButton
+            icon="more_xxs"
+            label="Действия с треком"
+          />
         )}
       </div>
       <div className="player-center PlayerBarDesktop_sonata__sJHY_">
@@ -162,6 +151,13 @@ export default function Player() {
               )
             }
           />
+          <IconButton
+            icon={liked ? "liked_xs" : "like_xs"}
+            label="Нравится текущий трек"
+            active={liked}
+            onClick={() => a.toggleLike(a.current)}
+            disabled={!a.current}
+          />
         </div>
       </div>
       <div className="player-tools PlayerBarDesktop_meta__6sm58">
@@ -178,13 +174,6 @@ export default function Player() {
           title=""
           active={a.panel === "queue"}
           onClick={() => a.setPanel(a.panel === "queue" ? null : "queue")}
-        />
-        <IconButton
-          icon="filter_xs"
-          label="Настройки звука"
-          title=""
-          active={sound}
-          onClick={() => setSound(true)}
         />
         <div className="volume-control">
           <IconButton
@@ -205,16 +194,7 @@ export default function Player() {
             onChange={(e) => a.setSettings({ volume: Number(e.target.value) })}
           />
         </div>
-        <IconButton
-          icon="fullscreen_xs"
-          label="Развернуть плеер"
-          title=""
-          onClick={() =>
-            a.setPanel(a.panel === "fullscreen" ? null : "fullscreen")
-          }
-        />
       </div>
-      {sound && <SoundSettings onClose={() => setSound(false)} />}
       {a.playbackError && (
         <div className="player-error" role="alert">
           {a.playbackError}
