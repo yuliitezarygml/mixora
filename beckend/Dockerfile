@@ -1,13 +1,14 @@
-FROM golang:1.27-alpine AS builder
+FROM golang:1.27-alpine AS build
+
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -o /out/api ./cmd/api
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/mixora-api ./cmd/server
+
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates && addgroup -g 10001 app && adduser -D -u 10001 -G app app
-WORKDIR /app
-COPY --from=builder /out/api /app/api
-USER app
+RUN apk add --no-cache ca-certificates tzdata
+COPY --from=build /out/mixora-api /usr/local/bin/mixora-api
 EXPOSE 8080
-ENTRYPOINT ["/app/api"]
+USER nobody:nobody
+ENTRYPOINT ["/usr/local/bin/mixora-api"]

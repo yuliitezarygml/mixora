@@ -1,69 +1,41 @@
 package httpapi
 
 import (
-	"mixora/beckend/internal/auth"
-	"mixora/beckend/internal/wave"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"net/http"
+
+	"github.com/iulian/soundcloud-go/internal/recommendation"
 )
 
-func (s *Server) waveSession(w http.ResponseWriter, r *http.Request, _ auth.User) {
-	var body struct {
-		Preferences wave.Preferences `json:"preferences"`
-		Context     wave.Context     `json:"context"`
-		Round       int              `json:"round"`
-		Explicit    *bool            `json:"explicit"`
-		Exclude     []wave.Track     `json:"exclude"`
-		Likes       []wave.Track     `json:"likes"`
-		History     []wave.Track     `json:"history"`
-		Dislikes    []wave.Track     `json:"dislikes"`
-		Seeds       []wave.Track     `json:"seeds"`
-	}
-	if !decodeFlex(w, r, &body, 128<<10) {
+func (s *Server) wave(w http.ResponseWriter, r *http.Request) {
+	var input recommendation.Request
+	if err := decodeJSON(w, r, &input, 1<<20); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_wave", "Некорректные настройки волны")
 		return
 	}
-	if body.Round < 0 {
-		body.Round = 0
-	}
-	if body.Round > 1000 {
-		body.Round = 1000
-	}
-	preferences := wave.Defaults(body.Preferences)
-	explicit := true
-	if body.Explicit != nil {
-		explicit = *body.Explicit
-	}
-	likes := limitTracks(body.Likes, 40)
-	history := limitTracks(body.History, 40)
-	candidates := limitTracks(body.Seeds, 40)
-	if preferences.Diversity != "familiar" {
-		raw, err := s.soundcloud.Search(r.Context(), wave.Query(preferences, likes, body.Context, body.Round), 40, 0)
-		if err != nil {
-			s.soundcloudError(w, err)
+	result, err := s.recommendations.Recommend(r.Context(), input)
+	if err != nil {
+		if errors.Is(err, recommendation.ErrUnavailable) {
+			writeError(w, r, http.StatusServiceUnavailable, "music_unavailable", "Музыкальный сервис временно недоступен")
 			return
 		}
-		found, err := wave.FromSoundCloud(raw)
-		if err != nil {
-			s.log.Error("wave parse failed", "error", err)
-			fail(w, 502, "SoundCloud request failed")
-			return
-		}
-		candidates = append(found, candidates...)
+		writeError(w, r, http.StatusBadGateway, "recommendation_failed", "Не удалось собрать волну")
+		return
 	}
-	tracks := wave.Build(candidates, wave.Library{Likes: likes, History: history, Dislikes: limitTracks(body.Dislikes, 80)}, preferences, wave.Options{
-		Explicit: explicit, Exclude: limitTracks(body.Exclude, 40), Limit: 30,
-	})
-	if tracks == nil {
-		tracks = []wave.Track{}
+	sessionID := randomID()
+	response := map[string]any{
+		"tracks": result.Tracks, "session_id": sessionID,
+		"model_version": result.ModelVersion, "reason": result.Reason,
 	}
-	respond(w, 200, map[string]any{"tracks": tracks, "query": wave.Query(preferences, likes, body.Context, body.Round)})
+	writeJSON(w, http.StatusOK, response)
 }
 
-func limitTracks(tracks []wave.Track, max int) []wave.Track {
-	if len(tracks) > max {
-		return tracks[:max]
+func randomID() string {
+	value := make([]byte, 16)
+	if _, err := rand.Read(value); err != nil {
+		return ""
 	}
-	if tracks == nil {
-		return []wave.Track{}
-	}
-	return tracks
+	return hex.EncodeToString(value)
 }

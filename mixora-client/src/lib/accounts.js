@@ -1,19 +1,15 @@
-export function rememberAccount(list, user, token) {
+export function rememberAccount(list, user, _legacyToken) {
   if (!user?.id) return Array.isArray(list) ? list.slice(0, 8) : [];
-  const previous = Array.isArray(list) ? list : [];
-  const existing = previous.find((item) => item?.id === user.id);
-  const saved =
-    typeof token === "string" && token.length > 0
-      ? token
-      : typeof existing?.token === "string"
-        ? existing.token
-        : "";
+  // Session credentials live only in the HttpOnly cookie. Mapping every saved
+  // profile also removes tokens left by older desktop builds.
+  const previous = Array.isArray(list)
+    ? list.map(({ token: _legacyToken, ...item }) => item)
+    : [];
   const profile = {
     id: user.id,
     email: user.email,
     display_name: user.display_name,
     plus: user.plus === true,
-    ...(saved ? { token: saved } : {}),
   };
   return [profile, ...previous.filter((item) => item?.id !== profile.id)].slice(
     0,

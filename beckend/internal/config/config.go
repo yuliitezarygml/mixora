@@ -4,34 +4,55 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 )
 
 type Config struct {
-	SoundCloudClientID, SoundCloudClientSecret, TokenEncryptionKey string
-	Addr, DatabaseURL, MediaDir, AllowedOrigin                     string
-	SecureCookies                                                  bool
+	HTTPAddr     string
+	Environment  string
+	DatabaseURL  string
+	RedisAddr    string
+	PublicURL    string
+	CookieSecure bool
+	SessionTTL   time.Duration
+	SMTPAddr     string
+	SMTPFrom     string
+	SMTPUsername string
+	SMTPPassword string
 }
 
 func Load() (Config, error) {
-	c := Config{Addr: env("HTTP_ADDR", "127.0.0.1:8080"), DatabaseURL: os.Getenv("DATABASE_URL"), MediaDir: env("MEDIA_DIR", "storage"), AllowedOrigin: env("ALLOWED_ORIGIN", "http://localhost:5173")}
-	c.SoundCloudClientID = os.Getenv("SOUNDCLOUD_CLIENT_ID")
-	c.SoundCloudClientSecret = os.Getenv("SOUNDCLOUD_CLIENT_SECRET")
-	c.TokenEncryptionKey = os.Getenv("TOKEN_ENCRYPTION_KEY")
-	if (c.SoundCloudClientID == "") != (c.SoundCloudClientSecret == "") {
-		return c, fmt.Errorf("set both SOUNDCLOUD_CLIENT_ID and SOUNDCLOUD_CLIENT_SECRET")
-	}
-	var err error
-	c.SecureCookies, err = strconv.ParseBool(env("COOKIE_SECURE", "false"))
+	secure, err := strconv.ParseBool(value("MIXORA_COOKIE_SECURE", "false"))
 	if err != nil {
-		return c, fmt.Errorf("COOKIE_SECURE must be true or false")
+		return Config{}, fmt.Errorf("MIXORA_COOKIE_SECURE: %w", err)
 	}
-	if c.DatabaseURL == "" {
-		return c, fmt.Errorf("DATABASE_URL is required")
+	ttl, err := time.ParseDuration(value("MIXORA_SESSION_TTL", "720h"))
+	if err != nil || ttl < time.Hour {
+		return Config{}, fmt.Errorf("MIXORA_SESSION_TTL must be a duration of at least one hour")
 	}
-	return c, nil
+
+	cfg := Config{
+		HTTPAddr:     value("MIXORA_HTTP_ADDR", ":8080"),
+		Environment:  value("MIXORA_ENV", "development"),
+		DatabaseURL:  strings.TrimSpace(os.Getenv("MIXORA_DATABASE_URL")),
+		RedisAddr:    value("MIXORA_REDIS_ADDR", "127.0.0.1:6379"),
+		PublicURL:    strings.TrimRight(value("MIXORA_PUBLIC_URL", "http://127.0.0.1:5174"), "/"),
+		CookieSecure: secure,
+		SessionTTL:   ttl,
+		SMTPAddr:     value("MIXORA_SMTP_ADDR", "127.0.0.1:1025"),
+		SMTPFrom:     value("MIXORA_SMTP_FROM", "Mixora <noreply@mixora.local>"),
+		SMTPUsername: strings.TrimSpace(os.Getenv("MIXORA_SMTP_USERNAME")),
+		SMTPPassword: os.Getenv("MIXORA_SMTP_PASSWORD"),
+	}
+	if cfg.DatabaseURL == "" {
+		return Config{}, fmt.Errorf("MIXORA_DATABASE_URL is required")
+	}
+	return cfg, nil
 }
-func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
+
+func value(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
 	}
 	return fallback

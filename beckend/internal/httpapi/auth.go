@@ -1,109 +1,180 @@
 package httpapi
 
 import (
-	"mixora/beckend/internal/auth"
+	"database/sql"
 	"net/http"
+
+	"github.com/iulian/soundcloud-go/internal/auth"
+	"github.com/iulian/soundcloud-go/internal/mail"
 )
 
-func (s *Server) withUser(next func(http.ResponseWriter, *http.Request, auth.User)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("mixora_session")
-		if err != nil {
-			fail(w, 401, "authentication required")
-			return
-		}
-		u, err := s.auth.Authenticate(r.Context(), cookie.Value)
-		if err != nil {
-			s.handleError(w, err)
-			return
-		}
-		next(w, r, u)
-	}
+type registerRequest struct {
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	DisplayName string `json:"display_name"`
 }
 
-type accountSession struct {
-	auth.User
-	Token string `json:"token"`
-}
-
-func (s *Server) setCookie(w http.ResponseWriter, token string, maxAge int) {
-	http.SetCookie(w, &http.Cookie{Name: "mixora_session", Value: token, Path: "/", HttpOnly: true, Secure: s.cfg.SecureCookies, SameSite: http.SameSiteLaxMode, MaxAge: maxAge})
-}
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Email       string `json:"email"`
-		Password    string `json:"password"`
-		DisplayName string `json:"display_name"`
-	}
-	if !decode(w, r, &body) {
+	var input registerRequest
+	if err := decodeJSON(w, r, &input, 32*1024); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_json", "Некорректные данные регистрации")
 		return
 	}
-	u, err := s.auth.Register(r.Context(), body.Email, body.Password, body.DisplayName)
+	registration, err := s.auth.Register(r.Context(), input.Email, input.Password, input.DisplayName)
 	if err != nil {
-		s.handleError(w, err)
+		authError(w, r, err)
 		return
 	}
-	respond(w, 201, u)
+	message := mail.VerificationMessage(
+		s.publicURL, registration.User.Email, registration.User.DisplayName,
+		registration.EmailVerificationToken,
+	)
+	if _, err := s.mailOutbox.Enqueue(r.Context(), message); err != nil {
+		// The account is valid even if SMTP is temporarily down; outbox insertion
+		// failing is surfaced so the verification can be requested again later.
+		writeError(w, r, http.StatusInternalServerError, "email_queue_failed", "Аккаунт создан, но письмо пока не отправлено")
+		return
+	}
+	writeJSON(w, http.StatusCreated, registration.User)
 }
+
+type loginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	if !decode(w, r, &body) {
+	var input loginRequest
+	if err := decodeJSON(w, r, &input, 16*1024); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_json", "Некорректные данные входа")
 		return
 	}
-	u, token, err := s.auth.Login(r.Context(), body.Email, body.Password)
+	result, err := s.auth.Login(r.Context(), input.Email, input.Password, sessionMetadata(r))
 	if err != nil {
-		s.handleError(w, err)
+		authError(w, r, err)
 		return
 	}
-	s.setCookie(w, token, int(auth.SessionTTL.Seconds()))
-	respond(w, 200, accountSession{User: u, Token: token})
+	s.setSessionCookie(w, result.SessionToken)
+	writeJSON(w, http.StatusOK, result.User)
 }
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(sessionCookie); err == nil {
+		_ = s.auth.Logout(r.Context(), cookie.Value)
+	}
+	s.clearSessionCookie(w)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) session(w http.ResponseWriter, r *http.Request) {
+	s.requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, principalFrom(r).User)
+	})).ServeHTTP(w, r)
+}
+
+// resume is a migration endpoint for old desktop profiles. New clients do not
+// persist or receive session tokens outside the HttpOnly cookie.
 func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
-	var body struct {
+	var input struct {
 		Token string `json:"token"`
 	}
-	if !decode(w, r, &body) {
+	if err := decodeJSON(w, r, &input, 8*1024); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_json", "Некорректная сессия")
 		return
 	}
-	u, err := s.auth.Authenticate(r.Context(), body.Token)
+	user, _, err := s.auth.Authenticate(r.Context(), input.Token)
 	if err != nil {
-		s.handleError(w, err)
+		writeError(w, r, http.StatusUnauthorized, "invalid_session", "Сессия закончилась. Войдите снова")
 		return
 	}
-	s.setCookie(w, body.Token, int(auth.SessionTTL.Seconds()))
-	respond(w, 200, accountSession{User: u, Token: body.Token})
+	s.setSessionCookie(w, input.Token)
+	writeJSON(w, http.StatusOK, user)
 }
-func (s *Server) session(w http.ResponseWriter, r *http.Request, u auth.User) {
-	cookie, err := r.Cookie("mixora_session")
-	if err != nil || cookie.Value == "" {
-		fail(w, 401, "authentication required")
+
+func (s *Server) verifyEmail(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if r.Method == http.MethodPost {
+		var input struct {
+			Token string `json:"token"`
+		}
+		if err := decodeJSON(w, r, &input, 8*1024); err != nil {
+			writeError(w, r, http.StatusBadRequest, "invalid_json", "Некорректная ссылка")
+			return
+		}
+		token = input.Token
+	}
+	user, err := s.auth.VerifyEmail(r.Context(), token)
+	if err != nil {
+		authError(w, r, err)
 		return
 	}
-	respond(w, 200, accountSession{User: u, Token: cookie.Value})
+	writeJSON(w, http.StatusOK, user)
 }
-func (s *Server) setSubscription(w http.ResponseWriter, r *http.Request, u auth.User) {
-	var body struct {
+
+func (s *Server) requestPasswordReset(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Email string `json:"email"`
+	}
+	if err := decodeJSON(w, r, &input, 8*1024); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_json", "Некорректная почта")
+		return
+	}
+	reset, err := s.auth.BeginPasswordReset(r.Context(), input.Email)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "internal_error", "Не удалось выполнить запрос")
+		return
+	}
+	if reset != nil {
+		message := mail.PasswordResetMessage(s.publicURL, reset.User.Email, reset.User.DisplayName, reset.Token)
+		_, _ = s.mailOutbox.Enqueue(r.Context(), message)
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+}
+
+func (s *Server) resetPassword(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Token    string `json:"token"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(w, r, &input, 16*1024); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_json", "Некорректные данные")
+		return
+	}
+	user, err := s.auth.ResetPassword(r.Context(), input.Token, input.Password)
+	if err != nil {
+		authError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, user)
+}
+
+func (s *Server) me(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, principalFrom(r).User)
+}
+
+func (s *Server) setSubscription(w http.ResponseWriter, r *http.Request) {
+	var input struct {
 		Plus bool `json:"plus"`
 	}
-	if !decode(w, r, &body) {
+	if err := decodeJSON(w, r, &input, 4*1024); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_json", "Некорректные данные")
 		return
 	}
-	updated, err := s.auth.SetPlus(r.Context(), u.ID, body.Plus)
+	var user auth.User
+	var verified sql.NullTime
+	err := s.db.QueryRow(r.Context(), `
+		UPDATE users SET plus=$2, updated_at=now() WHERE id=$1
+		RETURNING id::text,email,display_name,email_verified_at,status,plus,created_at,updated_at
+	`, principalFrom(r).User.ID, input.Plus).Scan(
+		&user.ID, &user.Email, &user.DisplayName, &verified, &user.Status,
+		&user.Plus, &user.CreatedAt, &user.UpdatedAt,
+	)
 	if err != nil {
-		s.handleError(w, err)
+		writeError(w, r, http.StatusInternalServerError, "internal_error", "Не удалось обновить профиль")
 		return
 	}
-	respond(w, 200, updated)
-}
-func (s *Server) logout(w http.ResponseWriter, r *http.Request, _ auth.User) {
-	cookie, _ := r.Cookie("mixora_session")
-	if err := s.auth.Logout(r.Context(), cookie.Value); err != nil {
-		s.handleError(w, err)
-		return
+	if verified.Valid {
+		user.EmailVerifiedAt = &verified.Time
 	}
-	s.setCookie(w, "", -1)
-	w.WriteHeader(204)
+	writeJSON(w, http.StatusOK, user)
 }

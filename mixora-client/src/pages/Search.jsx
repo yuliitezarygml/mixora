@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useApp } from "../state/context.js";
 import { duration, uniqueTracks } from "../lib/library.js";
-import { api, localTrack, searchCatalog } from "../lib/api.js";
+import { searchCatalog } from "../lib/api.js";
 import { correctQuery } from "../lib/suggest.js";
 import { useRemote } from "../lib/useRemote.js";
 import { TrackList, TrackCards } from "../components/Tracks.jsx";
@@ -43,11 +43,9 @@ export default function Search() {
     `${app.user?.id}:search:${source}:${kind}:${q}`,
     async (signal) => {
       if (source === "local") {
-        const data = await api(`/tracks?q=${encodeURIComponent(q)}`, {
-          signal,
-        });
+        const tracks = await searchCatalog("tracks", q, signal);
         return {
-          tracks: data.items.map(localTrack),
+          tracks,
           artists: [],
           playlists: [],
         };
@@ -114,8 +112,8 @@ export default function Search() {
         ...s,
         searches: [
           { kind: "query", query: value, title: value },
-          ...s.searches.filter((item) =>
-            (typeof item === "string" ? item : item.query) !== value,
+          ...s.searches.filter(
+            (item) => (typeof item === "string" ? item : item.query) !== value,
           ),
         ].slice(0, 30),
       }));
@@ -178,16 +176,16 @@ export default function Search() {
           Найти
         </button>
       </form>
-      {q ? (
-        corrected && (
-          <p className="search-hint">
-            Возможно, вы искали{" "}
-            <button type="button" onClick={() => setInput(hint)}>
-              {hint}
-            </button>
-          </p>
-        )
-      ) : null}
+      {q
+        ? corrected && (
+            <p className="search-hint">
+              Возможно, вы искали{" "}
+              <button type="button" onClick={() => setInput(hint)}>
+                {hint}
+              </button>
+            </p>
+          )
+        : null}
       {q ? (
         <>
           <div className="chip-row" role="group" aria-label="Тип результатов">

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AppContext as Context } from "./context.js";
-import { api, post, put } from "../lib/api.js";
+import { api, getTrackPlayback, post, put } from "../lib/api.js";
 import {
   readStorage,
   saveStorage,
@@ -149,18 +149,40 @@ export function AppProvider({ children }) {
     });
   };
   const toast = (message) => setNotice(message);
+  const recordEvent = (type, track, extra = {}) => {
+    if (!userRef.current || !track?.id) return;
+    post("/events", {
+      events: [
+        {
+          idempotency_key: crypto.randomUUID(),
+          type,
+          track_source: track.source || "music",
+          track_id: String(track.id),
+          occurred_at: new Date().toISOString(),
+          ...extra,
+        },
+      ],
+    }).catch(() => {
+      /* Telemetry must never interrupt playback. */
+    });
+  };
   const setSettings = (patch) =>
     setSettingsState((s) => {
       const next = { ...s, ...patch };
       saveStorage("mixora-ui:settings", next);
       return next;
     });
-  const remember = (track) =>
+  const remember = (track) => {
+    recordEvent("listen_30s", track, {
+      position_ms: Math.round((audioRef.current?.currentTime || 0) * 1000),
+      duration_ms: Math.round((audioRef.current?.duration || 0) * 1000),
+    });
     updateLibrary((s) => ({
       ...s,
       history: uniqueTracks([track, ...s.history]).slice(0, 100),
       listens: [{ track, at: Date.now() }, ...s.listens].slice(0, 1000),
     }));
+  };
   const play = (track, list = [track], origin = "queue") => {
     if (!track) {
       toast("В подборке пока нет доступных треков.");
@@ -317,6 +339,7 @@ export function AppProvider({ children }) {
     }
   };
   const dislike = (track) => {
+    recordEvent("dislike", track);
     updateLibrary((s) => ({
       ...s,
       dislikes: uniqueTracks([track, ...s.dislikes]),
@@ -363,7 +386,11 @@ export function AppProvider({ children }) {
       setPosition(value);
     }
   };
-  const toggleLike = (track) =>
+  const toggleLike = (track) => {
+    const adding = !library.likes.some(
+      (saved) => trackKey(saved) === trackKey(track),
+    );
+    if (adding) recordEvent("like", track);
     updateLibrary((s) => {
       const exists = s.likes.some((t) => trackKey(t) === trackKey(track));
       return {
@@ -373,6 +400,7 @@ export function AppProvider({ children }) {
           : [track, ...s.likes],
       };
     });
+  };
   const addQueue = (track) => {
     setQueue((q) => [...q, track]);
     toast("Трек добавлен в очередь");
@@ -392,6 +420,7 @@ export function AppProvider({ children }) {
     return p;
   };
   const addToPlaylist = (id, track) => {
+    recordEvent("add_to_playlist", track, { context: { playlist_id: id } });
     updateLibrary((s) => ({
       ...s,
       playlists: s.playlists.map((p) =>
@@ -578,7 +607,14 @@ export function AppProvider({ children }) {
       });
     }, 500);
     return () => clearTimeout(timer);
-  }, [sessionReady, user?.id, current?.id, index, queue.length, Math.floor(position)]);
+  }, [
+    sessionReady,
+    user?.id,
+    current?.id,
+    index,
+    queue.length,
+    Math.floor(position),
+  ]);
   useEffect(() => {
     if (user && pending.current) {
       const request = pending.current;
@@ -617,7 +653,12 @@ export function AppProvider({ children }) {
     const events = {
       timeupdate: () => {
         setPosition(a.currentTime);
-        if (!heard.current && a.currentTime > 0 && latest.current.current) {
+        const listenedEnough =
+          a.currentTime >= 30 ||
+          (Number.isFinite(a.duration) &&
+            a.duration > 0 &&
+            a.currentTime >= a.duration * 0.5);
+        if (!heard.current && listenedEnough && latest.current.current) {
           heard.current = true;
           latest.current.remember(latest.current.current);
         }
@@ -627,11 +668,17 @@ export function AppProvider({ children }) {
       play: () => {
         setPlaying(true);
         setPlaybackError("");
+        if (latest.current.current) recordEvent("play", latest.current.current);
       },
       pause: () => setPlaying(false),
       waiting: () => setLoading(true),
       playing: () => setLoading(false),
       ended: () => {
+        if (latest.current.current)
+          recordEvent("complete", latest.current.current, {
+            position_ms: Math.round((a.currentTime || 0) * 1000),
+            duration_ms: Math.round((a.duration || 0) * 1000),
+          });
         if (latest.current.autoplay) latest.current.next(true);
         else setPlaying(false);
       },
@@ -695,12 +742,9 @@ export function AppProvider({ children }) {
     setPlaybackError("");
     (async () => {
       try {
-        if (current.source === "soundcloud") {
-          const playback = await api(
-            `/providers/soundcloud/tracks/${encodeURIComponent(current.id)}/playback`,
-            { signal: controller.signal },
-          );
-          if (cancelled) return;
+        const playback = await getTrackPlayback(current.id, controller.signal);
+        if (cancelled) return;
+        if (playback.format === "hls") {
           const { default: Hls } = await import("hls.js");
           if (cancelled) return;
           if (Hls.isSupported()) {
@@ -728,7 +772,7 @@ export function AppProvider({ children }) {
             throw Error("Этот браузер не поддерживает воспроизведение HLS.");
           }
         } else {
-          a.src = `/api/v1/tracks/${encodeURIComponent(current.id)}/stream`;
+          a.src = playback.url;
           beginPlayback(a);
         }
         if (!cancelled) {

@@ -1,9 +1,42 @@
 export class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, details = null) {
     super(message);
+    this.name = "ApiError";
     this.status = status;
+    this.code = details?.code || "";
+    this.requestId = details?.request_id || "";
   }
 }
+
+const errorDetails = (value) =>
+  value !== null && typeof value === "object" ? value : null;
+
+const errorMessage = (value) =>
+  typeof value === "string"
+    ? value
+    : typeof value?.message === "string"
+      ? value.message
+      : "";
+
+const isResponseEnvelope = (value) =>
+  value !== null &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  typeof value.success === "boolean" &&
+  (Object.hasOwn(value, "data") || Object.hasOwn(value, "error"));
+
+export function unwrapApiResponse(value, status = 200) {
+  if (!isResponseEnvelope(value)) return value;
+  if (!value.success) {
+    throw new ApiError(
+      errorMessage(value.error) || "Не удалось выполнить запрос.",
+      status,
+      errorDetails(value.error),
+    );
+  }
+  return value.data;
+}
+
 export async function api(path, { signal, ...options } = {}) {
   const response = await fetch(`/api/v1${path}`, {
     credentials: "include",
@@ -33,12 +66,17 @@ export async function api(path, { signal, ...options } = {}) {
       502: "Не удалось получить аудио от SoundCloud. Попробуйте ещё раз.",
       503: "Музыкальный сервис временно недоступен.",
     };
+    const details = errorDetails(data?.error);
     throw new ApiError(
-      messages[response.status] || data.error || "Не удалось выполнить запрос.",
+      (details && errorMessage(details)) ||
+        messages[response.status] ||
+        errorMessage(data?.error) ||
+        "Не удалось выполнить запрос.",
       response.status,
+      details,
     );
   }
-  return data;
+  return unwrapApiResponse(data, response.status);
 }
 export const post = (path, body) =>
   api(path, {
@@ -47,6 +85,27 @@ export const post = (path, body) =>
   });
 export const put = (path, body) =>
   api(path, { method: "PUT", body: JSON.stringify(body) });
+
+export function soundcloudResourceId(value) {
+  let raw = String(value ?? "").trim();
+  try {
+    raw = decodeURIComponent(raw);
+  } catch {
+    // Keep the original value. It can still be a valid plain numeric id.
+  }
+  if (/^\d+$/.test(raw)) return raw;
+
+  const withoutQuery = raw.split(/[?#]/, 1)[0];
+  const urn = withoutQuery.match(/(?:^|:)(\d+)$/);
+  if (urn) return urn[1];
+  const apiPath = withoutQuery.match(
+    /\/(?:tracks|users|playlists)\/(\d+)\/?$/i,
+  );
+  if (apiPath) return apiPath[1];
+
+  throw new ApiError("Некорректный идентификатор ресурса SoundCloud.", 400);
+}
+
 const displayName = (value) =>
   typeof value === "string" ? value.trim().normalize("NFC") : "";
 export function soundcloudTrack(t) {
@@ -74,8 +133,10 @@ export function soundcloudTrack(t) {
     tagList: t.tag_list || "",
   };
 }
-export const collectionItems = (data) =>
-  Array.isArray(data) ? data : data?.collection || [];
+export const collectionItems = (data) => {
+  const value = unwrapApiResponse(data);
+  return Array.isArray(value) ? value : value?.collection || [];
+};
 export function soundcloudArtist(data) {
   return {
     id: String(data.urn || data.id),
@@ -105,7 +166,7 @@ export function soundcloudPlaylist(data) {
 }
 export async function searchCatalog(kind, q, signal) {
   const data = await api(
-    `/providers/soundcloud/catalog/${kind}?q=${encodeURIComponent(q)}&limit=40`,
+    `/search?q=${encodeURIComponent(q)}&type=${encodeURIComponent(kind)}&limit=40`,
     { signal },
   );
   const convert =
@@ -116,11 +177,52 @@ export async function searchCatalog(kind, q, signal) {
         : soundcloudTrack;
   return collectionItems(data).map(convert);
 }
-export const catalogResource = (kind, id, section = "", signal) =>
-  api(
-    `/providers/soundcloud/catalog/${kind}/${encodeURIComponent(id)}${section ? `/${section}` : ""}`,
+export function catalogResource(kind, id, section = "", signal) {
+  const resourceId = soundcloudResourceId(id);
+  if (kind === "users" && section === "playlists") {
+    // The current backend exposes user profiles and tracks, but no user-playlists
+    // route yet. Keep the details screen usable without calling a stale endpoint.
+    return Promise.resolve({ collection: [] });
+  }
+
+  const routes = {
+    tracks: `/tracks/${resourceId}`,
+    users: `/users/${resourceId}${section === "tracks" ? "/tracks" : ""}`,
+    playlists: `/playlists/${resourceId}`,
+  };
+  const route = routes[kind];
+  if (!route) {
+    return Promise.reject(
+      new ApiError("Неизвестный тип ресурса каталога.", 400),
+    );
+  }
+  return api(route, { signal });
+}
+
+export function normalizeTrackPlayback(data) {
+  const value = unwrapApiResponse(data);
+  const url = value?.stream_url || value?.url || "";
+  if (!url) {
+    throw new ApiError("Сервер не вернул ссылку на аудиопоток.", 502);
+  }
+  const rawFormat =
+    typeof value.format === "string"
+      ? value.format
+      : value.format?.protocol || value.protocol || "";
+  const format =
+    rawFormat.toLowerCase() === "hls" || /\.m3u8(?:$|[?#])/i.test(url)
+      ? "hls"
+      : "progressive";
+  return { ...value, url, format };
+}
+
+export async function getTrackPlayback(id, signal) {
+  const data = await api(
+    `/tracks/${encodeURIComponent(soundcloudResourceId(id))}/stream`,
     { signal },
   );
+  return normalizeTrackPlayback(data);
+}
 export function localTrack(t) {
   return {
     ...t,
@@ -132,8 +234,8 @@ export function localTrack(t) {
 }
 export async function searchTracks(q, signal) {
   const result = await api(
-    `/providers/soundcloud/tracks?q=${encodeURIComponent(q)}&limit=40`,
+    `/search?q=${encodeURIComponent(q)}&type=tracks&limit=40`,
     { signal },
   );
-  return (result.collection || result || []).map(soundcloudTrack);
+  return collectionItems(result).map(soundcloudTrack);
 }
