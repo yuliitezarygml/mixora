@@ -967,53 +967,194 @@ html.mixora-desktop .NavbarDesktop_logoWrapper__89ce6 button {
   top: 88px;
   right: 28px;
   left: auto;
-  width: min(410px, calc(100vw - 32px));
+  width: min(430px, calc(100vw - 32px));
   max-height: calc(100vh - 120px);
   padding: 18px 16px 20px;
   overflow: auto;
+  scrollbar-width: none;
+  border: 1px solid rgba(255, 255, 255, 0.055);
   border-radius: 24px;
-  background: #242429;
-  box-shadow: 0 24px 80px #000a;
+  background: linear-gradient(180deg, #282123 0%, #1d191a 43%, #171717 100%);
+  box-shadow: 0 24px 80px #0009;
+  -webkit-backdrop-filter: blur(24px) saturate(125%);
+  backdrop-filter: blur(24px) saturate(125%);
+}
+.wave-settings-card::-webkit-scrollbar {
+  display: none;
 }
 .wave-settings-card h2 {
   margin: 0;
   font-size: 22px;
   line-height: 1.2;
 }
+.wave-settings-card .VibeSettings_header__OAWe2 {
+  margin-bottom: 16px;
+}
+.wave-settings-card .VibeSettings_header__OAWe2::before {
+  display: none;
+}
+.wave-settings-card .VibeSettings_root__ufZlV {
+  align-items: stretch;
+  height: auto;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  scrollbar-width: auto;
+}
 .wave-settings-card fieldset {
+  min-width: 0;
   margin: 0;
   border: 0;
   padding: 0;
 }
 .wave-settings-card legend {
   margin-bottom: 10px;
-  color: #b7b7c2;
+  color: #999698;
   font-size: 14px;
+  line-height: 20px;
+}
+.wave-settings-card .RestrictionBlock_restrictions__BhR_r {
+  flex-wrap: wrap;
+  gap: 12px;
 }
 .wave-settings-icon {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   display: grid;
+  flex: 0 0 auto;
   place-items: center;
   border-radius: 50%;
   color: white;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+.wave-settings-icon--reset {
+  width: 30px;
+  height: 30px;
+  border: 2px solid #3d3a3b;
+  color: #494647;
+}
+.wave-settings-icon--close {
+  background: #2d2b2c;
+  color: #f4f2f3;
+}
+@media (hover: hover) {
+  .wave-settings-icon--reset:hover {
+    border-color: #777375;
+    color: #aaa6a8;
+  }
+  .wave-settings-icon--close:hover {
+    background: #3a3738;
+  }
+}
+.wave-character-icon {
+  display: block;
+  width: 40px;
+  height: 40px;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.22));
 }
 .wave-mood {
   display: block;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
+  background: var(--wave-mood-fallback);
+}
+.wave-mood-button {
+  display: grid;
+  place-items: center;
+  background: transparent;
+}
+.wave-mood--energetic {
+  background: linear-gradient(180deg, #ffae18 0%, #ff7d12 45%, #f33a18 100%);
+}
+.wave-mood--happy {
+  background: linear-gradient(180deg, #f2f21b 0%, #83dd18 48%, #20bc2b 100%);
+}
+.wave-mood--calm {
+  background: linear-gradient(180deg, #11ceb9 0%, #0caec8 52%, #0e91df 100%);
+}
+.wave-mood--sad {
+  background: linear-gradient(180deg, #168df0 0%, #354fe7 52%, #6511e6 100%);
 }
 .RestrictionButton_moodEnergy__q_I4y.is-selected .wave-mood {
-  box-shadow: 0 0 0 3px #fff;
+  box-shadow:
+    0 0 0 2px #fff,
+    0 0 0 4px rgba(255, 255, 255, 0.16);
 }
 .RestrictionButton_textButton__HC_AE,
 .RestrictionButton_diversityButton__uclSi {
-  border-radius: 16px;
-  background: #32323a;
+  background: #2c2c2c;
   color: white;
 }
-.RestrictionButton_button_selected__LHD20 {
-  background: #ececf1;
-  color: #16161a;
+.RestrictionButton_textButton__HC_AE {
+  min-height: 48px;
+  padding: 12px 20px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.RestrictionButton_diversityButton__uclSi {
+  min-width: 0;
+  border-radius: 16px;
+}
+@media (min-width: 440px) {
+  .wave-activity--wake,
+  .wave-activity--work {
+    width: 128px;
+  }
+  .wave-activity--road,
+  .wave-activity--sleep {
+    width: 103px;
+  }
+  .wave-activity--workout {
+    width: 126px;
+  }
+}
+.wave-settings-card .RestrictionButton_button_selected__LHD20 {
+  border-color: #f0edef;
+  background: #2c2c2c;
+  color: white;
+}
+.wave-settings-card .RestrictionButton_moodEnergy__q_I4y {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+@media (max-width: 767.98px) {
+  .wave-settings-card {
+    top: 4px;
+    right: 10px;
+    bottom: 8px;
+    left: 10px;
+    width: auto;
+    max-width: none;
+    height: auto;
+    max-height: none;
+    border-radius: 16px;
+  }
+  .wave-settings-card .VibeSettings_header__OAWe2 {
+    padding-inline-start: 0;
+  }
+}
+@media (max-width: 399.98px) {
+  .wave-settings-card {
+    right: 6px;
+    left: 6px;
+    padding-inline: 14px;
+  }
+  .wave-settings-card .RestrictionBlock_restrictions__BhR_r {
+    gap: 8px;
+  }
+  .RestrictionButton_textButton__HC_AE {
+    padding-inline: 16px;
+  }
 }
 .home-landing {
   gap: 24px;
@@ -1263,7 +1404,8 @@ html.mixora-desktop .NavbarDesktop_logoWrapper__89ce6 button {
   appearance: none;
   background: transparent;
 }
-.FullscreenPlayerDesktopContent_slider__FJscl input::-webkit-slider-runnable-track {
+.FullscreenPlayerDesktopContent_slider__FJscl
+  input::-webkit-slider-runnable-track {
   height: 3px;
   border-radius: 3px;
   background: linear-gradient(
@@ -1288,10 +1430,13 @@ html.mixora-desktop .NavbarDesktop_logoWrapper__89ce6 button {
   color: inherit;
   text-align: left;
 }
-.FullscreenPlayerDesktop_root___8vo1 .HorizontalCardContainer_root__YoAAP.is-current {
+.FullscreenPlayerDesktop_root___8vo1
+  .HorizontalCardContainer_root__YoAAP.is-current {
   background: rgba(255, 255, 255, 0.14);
 }
-.FullscreenPlayerDesktop_root___8vo1 .HorizontalCardContainer_root__YoAAP .cover {
+.FullscreenPlayerDesktop_root___8vo1
+  .HorizontalCardContainer_root__YoAAP
+  .cover {
   width: 40px;
   height: 40px;
 }
