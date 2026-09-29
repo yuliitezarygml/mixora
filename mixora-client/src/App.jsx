@@ -14,6 +14,7 @@ import Details from "./pages/Details.jsx";
 import Browse from "./pages/Browse.jsx";
 import Discovery from "./pages/Discovery.jsx";
 import Settings from "./pages/Settings.jsx";
+import AuthAction from "./pages/AuthAction.jsx";
 import Sidebar, { navigation } from "./components/Sidebar.jsx";
 import SplashScreen from "./components/SplashScreen.jsx";
 export default function App() {
@@ -71,6 +72,10 @@ export default function App() {
           }
         />
       </div>
+    ) : kind === "auth_action" ? (
+      <AuthAction
+        action={location.pathname === "/verify-email" ? "verify" : "reset"}
+      />
     ) : kind === "landing" ? (
       <div className="landing">
         <Icon name="musicLogo" size={100} />

@@ -2,6 +2,12 @@ const { app, BrowserWindow, shell } = require("electron");
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  DESKTOP_ORIGIN,
+  isMixoraDevServerResponse,
+  listenOnDesktopOrigin,
+} = require("./origin.cjs");
+const { isHttpProxyPath } = require("./routing.cjs");
 let server, window, origin;
 const root = path.resolve(__dirname, "../dist");
 const types = {
@@ -28,10 +34,7 @@ function respond(req, res) {
     res.end();
     return;
   }
-  if (
-    url.pathname.startsWith("/api/v1/") ||
-    url.pathname.startsWith("/health/")
-  ) {
+  if (isHttpProxyPath(url.pathname)) {
     const headers = { ...req.headers, host: "127.0.0.1:8080" };
     if (headers.origin === origin) delete headers.origin;
     const upstream = http.request(
@@ -121,7 +124,7 @@ function probe(url) {
   return new Promise((resolve) => {
     const req = http.get(url, (res) => {
       res.resume();
-      resolve(res.statusCode > 0 && res.statusCode < 500);
+      resolve(isMixoraDevServerResponse(res));
     });
     req.on("error", () => resolve(false));
     req.setTimeout(800, () => {
@@ -163,8 +166,8 @@ function openWindow(target) {
   window.loadURL(target);
 }
 app.whenReady().then(async () => {
-  if (await probe("http://127.0.0.1:5174/")) {
-    origin = "http://127.0.0.1:5174";
+  if (await probe(`${DESKTOP_ORIGIN}/`)) {
+    origin = DESKTOP_ORIGIN;
     openWindow(origin);
     return;
   }
@@ -216,10 +219,15 @@ app.whenReady().then(async () => {
     });
     upstream.end();
   });
-  server.listen(0, "127.0.0.1", () => {
-    origin = `http://127.0.0.1:${server.address().port}`;
+  try {
+    origin = await listenOnDesktopOrigin(server);
     openWindow(origin);
-  });
+  } catch (error) {
+    console.error(
+      `Could not start Mixora at ${DESKTOP_ORIGIN}: ${error.message}`,
+    );
+    app.quit();
+  }
 });
 app.on("window-all-closed", () => app.quit());
 app.on("before-quit", () => server?.close());

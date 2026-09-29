@@ -12,6 +12,12 @@ import {
 } from "../lib/library.js";
 import { dropAccountToken, rememberAccount } from "../lib/accounts.js";
 import { playbackSnapshot } from "../lib/playbackSync.js";
+import {
+  acknowledgeEvents,
+  enqueueEvent,
+  eventBatch,
+  eventQueueKey,
+} from "../lib/eventQueue.js";
 import { buildWave, defaultWave } from "../lib/wave.js";
 import initialCatalog from "../data/catalog.json";
 function applyQuality(hls, quality) {
@@ -128,6 +134,7 @@ export function AppProvider({ children }) {
     latest = useRef({}),
     resumeRef = useRef(null),
     restoredRef = useRef(""),
+    eventFlushRef = useRef(false),
     eqRef = useRef(null),
     settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -149,22 +156,41 @@ export function AppProvider({ children }) {
     });
   };
   const toast = (message) => setNotice(message);
+  const flushEvents = async (userId = userRef.current?.id) => {
+    if (!userId || eventFlushRef.current || navigator.onLine === false) return;
+    const key = eventQueueKey(userId);
+    const batch = eventBatch(readStorage(key, []));
+    if (!batch.length) return;
+    eventFlushRef.current = true;
+    let delivered = false;
+    try {
+      await post("/events", { events: batch });
+      const remaining = acknowledgeEvents(readStorage(key, []), batch);
+      saveStorage(key, remaining);
+      delivered = true;
+    } catch {
+      // Events stay queued with their idempotency keys until the next attempt.
+    } finally {
+      eventFlushRef.current = false;
+      if (delivered && eventBatch(readStorage(key, [])).length) {
+        queueMicrotask(() => flushEvents(userId));
+      }
+    }
+  };
   const recordEvent = (type, track, extra = {}) => {
-    if (!userRef.current || !track?.id) return;
-    post("/events", {
-      events: [
-        {
-          idempotency_key: crypto.randomUUID(),
-          type,
-          track_source: track.source || "music",
-          track_id: String(track.id),
-          occurred_at: new Date().toISOString(),
-          ...extra,
-        },
-      ],
-    }).catch(() => {
-      /* Telemetry must never interrupt playback. */
-    });
+    const userId = userRef.current?.id;
+    if (!userId || !track?.id) return;
+    const event = {
+      idempotency_key: crypto.randomUUID(),
+      type,
+      track_source: track.source || "music",
+      track_id: String(track.id),
+      occurred_at: new Date().toISOString(),
+      ...extra,
+    };
+    const key = eventQueueKey(userId);
+    saveStorage(key, enqueueEvent(readStorage(key, []), event));
+    void flushEvents(userId);
   };
   const setSettings = (patch) =>
     setSettingsState((s) => {
@@ -579,6 +605,14 @@ export function AppProvider({ children }) {
     return () => {
       ignore = true;
     };
+  }, [sessionReady, user?.id]);
+  useEffect(() => {
+    if (!sessionReady || !user?.id) return;
+    const userId = user.id;
+    const flush = () => void flushEvents(userId);
+    flush();
+    window.addEventListener("online", flush);
+    return () => window.removeEventListener("online", flush);
   }, [sessionReady, user?.id]);
   useEffect(() => {
     if (!sessionReady) return;

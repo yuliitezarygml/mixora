@@ -1121,6 +1121,37 @@ select {
   font-size: 60px;
   margin: 0;
 }
+.auth-action-page {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 48px 24px;
+}
+.auth-action-card {
+  width: min(460px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 34px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--popover);
+  box-shadow: 0 24px 100px #0006;
+}
+.auth-action-card > svg {
+  color: var(--accent);
+}
+.auth-action-card h1,
+.auth-action-card p {
+  margin: 0;
+}
+.auth-action-card > p,
+.auth-action-card .auth-form > p {
+  color: var(--muted);
+}
+.auth-action-card > .text-button {
+  align-self: center;
+}
 .error-screen {
   padding: 15vh 30px;
   text-align: center;

@@ -8,7 +8,7 @@ import (
 )
 
 func VerificationMessage(publicURL, recipient, displayName, token string) Message {
-	link := actionURL(publicURL, "/api/v1/auth/verify-email", token)
+	link := actionURL(publicURL, "/verify-email", token)
 	name := strings.TrimSpace(displayName)
 	if name == "" {
 		name = "слушатель"

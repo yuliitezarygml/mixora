@@ -25,7 +25,7 @@ const proxy = {
 };
 export default defineConfig({
   plugins: [react()],
-  server: { proxy },
+  server: { proxy, headers: { "X-Mixora-Dev-Server": "1" } },
   preview: { proxy },
   build: { target: "es2022" },
 });

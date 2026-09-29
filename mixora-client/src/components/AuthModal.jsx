@@ -11,7 +11,10 @@ function sharpCover(url) {
 
 const covers = [
   ...new Set(
-    catalog.map((track) => track.artwork).filter(Boolean).map(sharpCover),
+    catalog
+      .map((track) => track.artwork)
+      .filter(Boolean)
+      .map(sharpCover),
   ),
 ];
 const tiles = Array.from(
@@ -90,6 +93,21 @@ export default function AuthModal() {
         display_name: name.trim(),
       });
       await app.login(email.trim(), password);
+      app.toast("Аккаунт создан. Проверьте почту для подтверждения адреса.");
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitPasswordRequest(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await post("/auth/password/request", { email: email.trim() });
+      setView("forgot-sent");
     } catch (err) {
       fail(err);
     } finally {
@@ -240,7 +258,56 @@ export default function AuthModal() {
             <button className="auth-submit" disabled={busy}>
               {busy ? "Подождите…" : "Войти"}
             </button>
+            <button
+              className="text-button"
+              type="button"
+              onClick={() => {
+                setError("");
+                setView("forgot");
+              }}
+            >
+              Забыли пароль?
+            </button>
           </form>
+        ) : view === "forgot" ? (
+          <form className="auth-form" onSubmit={submitPasswordRequest}>
+            <h2>Восстановить пароль</h2>
+            <p>Отправим ссылку для создания нового пароля.</p>
+            <label>
+              Электронная почта
+              <input
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
+                autoFocus
+                required
+              />
+            </label>
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <button className="auth-submit" disabled={busy}>
+              {busy ? "Отправляем…" : "Получить ссылку"}
+            </button>
+          </form>
+        ) : view === "forgot-sent" ? (
+          <div className="auth-form">
+            <h2>Проверьте почту</h2>
+            <p>
+              Если аккаунт с адресом <strong>{email}</strong> существует, письмо
+              со ссылкой уже отправлено.
+            </p>
+            <button
+              className="auth-submit"
+              type="button"
+              onClick={() => setView("login")}
+            >
+              Вернуться ко входу
+            </button>
+          </div>
         ) : view === "qr" ? (
           <div className="auth-form">
             <h2>QR-код</h2>

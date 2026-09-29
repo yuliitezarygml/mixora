@@ -115,7 +115,7 @@ func main() {
 	if err != nil {
 		log.Printf("[WARN] Failed to initialize SoundCloud client: %v", err)
 	} else {
-		log.Printf("[SUCCESS] SoundCloud Client initialized with client_id: %s", scClient.ClientID())
+		log.Println("[SUCCESS] SoundCloud Client initialized automatically")
 	}
 
 	// 2. Initialize Spotify Client

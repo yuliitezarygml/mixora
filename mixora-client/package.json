@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4174 --strictPort",
     "desktop": "electron .",
-    "test": "node --test src/lib/*.test.js",
+    "test": "node --test src/lib/*.test.js desktop/*.test.cjs",
     "format": "prettier --write src desktop vite.config.js",
     "format:check": "prettier --check src desktop vite.config.js",
     "styles:verify": "node scripts/verify-reference.mjs",

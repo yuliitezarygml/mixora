@@ -38,7 +38,7 @@ Mixora — настольный и веб-клиент музыкального 
 
 ### Клиент
 
-- React 19, Vite 7 и Electron 36.
+- React 19, Vite 7 и Electron 44.
 - Реализована оболочка, маршруты, основные страницы, плеер, HLS, очередь,
   эквалайзер, Media Session, экран авторизации и локальная «волна».
 - Большая часть состояния собрана в одном `AppContext.jsx`; это мешает
@@ -49,8 +49,9 @@ Mixora — настольный и веб-клиент музыкального 
 - Клиент уже ожидает прикладной API (`/auth`, `/me`, `/library`, `/wave`,
   `/playback/ws`). Музыкальные запросы нужно подключить к фактическому контракту
   готового backend, не вводя новый provider-specific слой.
-- Electron использует случайный локальный порт для production-сборки. Из-за
-  origin-scoped storage это может ломать устойчивость локального состояния.
+- Electron использует фиксированный loopback-origin `127.0.0.1:5174` и не
+  откатывается на случайный порт. Поэтому cookie и origin-scoped storage
+  сохраняются между production-запусками; занятый порт приводит к явной ошибке.
 
 ### Сервер
 
@@ -344,9 +345,9 @@ empty, error, offline, keyboard и responsive, после чего пишетс�
 - [x] Есть визуальные экраны login/register/switch.
 - [x] Реальный register/login/logout/session.
 - [x] Backend verify email и password reset через SMTP outbox.
-- [ ] Добавить формы UI для подтверждения email и password reset.
+- [x] Добавить формы UI для подтверждения email и password reset.
 - [ ] Loading/error/offline состояния.
-- [ ] Безопасное переключение аккаунта без токена в localStorage.
+- [x] Безопасное переключение аккаунта без токена в localStorage.
 - [ ] Splash показывается только до готовности session + initial data.
 
 ### Сценарий B: поиск → карточка → проигрывание
@@ -388,7 +389,8 @@ empty, error, offline, keyboard и responsive, после чего пишетс�
 
 ### Сценарий F: desktop
 
-- [ ] Стабильный custom protocol/origin вместо случайного порта.
+- [x] Стабильный origin вместо случайного порта.
+- [ ] Custom protocol и deep links для desktop-ссылок из писем.
 - [ ] Один экземпляр приложения и deep links.
 - [ ] Tray/system media controls.
 - [ ] Безопасный preload IPC с явным allowlist.
@@ -471,7 +473,7 @@ Postgres/Redis/Mailpit наружу.
 
 - [x] Инвентаризировать фактические маршруты и payload поиска, музыки,
   метаданных, текстов и воспроизведения.
-- [ ] Закрепить рабочий контракт contract/regression тестами без переделки
+- [x] Закрепить рабочий контракт contract/regression тестами без переделки
   engine и без конструирования provider ID в app layer.
 - [x] Подключить один API/mapper клиента к фактическому контракту.
 - [ ] Проверить timeout, unavailable track, offline и controlled error states.
@@ -484,7 +486,7 @@ Postgres/Redis/Mailpit наружу.
 ### P3 — события и Wave V0/V1
 
 - [x] Event API и отправка основных событий клиента.
-- [ ] Добавить offline-буфер и повторную отправку событий клиента.
+- [x] Добавить offline-буфер и повторную отправку событий клиента.
 - [x] Wave V0 на правилах и кандидатах готового engine.
 - [ ] Поднять Gorse в отдельном Compose profile.
 - [ ] Экспорт пользователей/items/feedback и hybrid ranking.
@@ -559,6 +561,13 @@ dislike исключает трек, early skip влияет мягко.
 - 2026-09-29: P0 и backend-часть P1 подняты в Docker и проверены smoke-сценарием:
   register, login, session, Mailpit, verify email, library, event, search и Wave
   V0 работают совместно; музыкальные пакеты при этом не переписывались.
+- 2026-09-29: app API закреплён автоматическим HTTP/WebSocket contract suite;
+  тесты работают через узкие fake-зависимости и не требуют изменения готового
+  музыкального engine.
+- 2026-09-29: production Electron использует стабильный loopback-origin
+  `127.0.0.1:5174`; случайный порт и потеря origin-scoped состояния исключены.
+- 2026-09-29: клиент получил полный UI-поток verify email/password reset и
+  устойчивую offline-очередь рекомендательных событий с idempotency keys.
 
 ## 19. Definition of Done всего проекта
 

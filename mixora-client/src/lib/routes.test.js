@@ -9,6 +9,10 @@ test("every original route has a deliberate page family", () => {
 });
 test("unknown routes render a not-found state", () =>
   assert.equal(pageKind("/does-not-exist"), "error"));
+test("email actions have a dedicated route", () => {
+  assert.equal(pageKind("/verify-email"), "auth_action");
+  assert.equal(pageKind("/reset-password"), "auth_action");
+});
 test("catalog overviews use the discovery screens", () => {
   for (const route of [
     "/genre",

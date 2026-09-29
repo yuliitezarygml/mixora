@@ -1,6 +1,8 @@
-# Universal Music Backend & Go SDK (SoundCloud + Spotify Librespot + YouTube / Bandcamp / VK)
+# Mixora API и Universal Music Engine (SoundCloud + Spotify Librespot + YouTube / Bandcamp / VK)
 
-Полноценная модульная Go-библиотека, автономный REST API бэкенд и CLI-интерфейс, объединяющий три мощнейших аудио-движка:
+Готовый музыкальный движок на Go остаётся отдельным слоем SDK, REST-маршрутов и CLI. `cmd/server` теперь также поднимает app-layer Mixora: аутентификацию и сессии, библиотеку пользователя, события, рекомендации, синхронизацию плеера, PostgreSQL-миграции и почтовый outbox. Неизвестные app-layer маршруты передаются в существующий музыкальный router.
+
+Движок объединяет три источника:
 1. **SoundCloud v2** (реверс-инжиниринг с авто-скрапингом `client_id`)
 2. **Spotify & Librespot** (Spotify Connect приемник, удаленное управление и Zero-Config парсинг)
 3. **Universal Extractor на базе `yt-dlp`** (YouTube / YouTube Music, Bandcamp, ВКонтакте (VK) и ещё 1000+ медиа-сервисов)
@@ -43,64 +45,78 @@
 ## 🏗 Архитектура проекта
 
 ```text
-soundcloud-go/
-├── cmd/
-│   ├── server/
-│   │   └── main.go          # Автономный REST API бэкенд (SoundCloud + Spotify + yt-dlp)
-│   └── cli/
-│       └── main.go          # Единая CLI утилита со всеми командами
-├── internal/
-│   └── api/                 # Реализация REST API сервиса
-│       ├── handlers.go      # Общие и SoundCloud обработчики
-│       ├── spotify_handlers.go # Spotify & Spotify Connect обработчики
-│       ├── ytdlp_handlers.go   # Universal Extractor (YouTube, VK, Bandcamp) обработчики
-│       ├── router.go        # Маршрутизация и middleware (CORS, Logging)
-│       └── response.go      # Стандартизация ответов и ошибок
-├── pkg/
-│   ├── soundcloud/          # Go SDK для SoundCloud v2
-│   │   ├── client.go        # Инициализация и Functional Options
-│   │   ├── tracks.go        # Метаданные, waveform, stream
-│   │   ├── lyrics.go        # Синхронизированные тексты песен
-│   │   └── ...
-│   ├── spotify/             # Go SDK для Spotify & Librespot Connect
-│   │   ├── client.go        # Инициализация клиента Spotify
-│   │   ├── tracks.go        # Метаданные треков, альбомов, артистов
-│   │   ├── connect.go       # HTTP клиент к Spotify Connect демону (go-librespot)
-│   │   ├── supervisor.go    # Менеджер процесса демона Connect
-│   │   └── ...
-│   └── ytdlp/               # Go SDK для Universal Extractor (yt-dlp)
-│       ├── client.go        # Обнаружение и запуск бинарника yt-dlp
-│       ├── extract.go       # Извлечение метаданных и прямых audio CDN URL
-│       ├── search.go        # Поиск по YouTube Music / YouTube
-│       └── models/          # Доменные структуры
-├── examples/
-│   ├── basic/               # Пример SoundCloud Go SDK
-│   ├── spotify/             # Пример Spotify & Connect Go SDK
-│   └── ytdlp/               # Пример Universal Extractor (Bandcamp + YouTube) Go SDK
-├── go.mod
-└── README.md
+mixora/
+├── compose.yaml              # API, PostgreSQL, Redis и Mailpit для локального запуска
+├── .env.example              # Пример app-layer конфигурации
+└── beckend/
+    ├── cmd/
+    │   ├── server/main.go       # Mixora app-layer + музыкальный REST API
+    │   └── cli/main.go          # CLI музыкального движка
+    ├── internal/
+    │   ├── api/                 # Существующие SoundCloud / Spotify / yt-dlp routes
+    │   ├── httpapi/             # App-layer routes и middleware Mixora
+    │   ├── auth/, database/     # Учётные записи, сессии, PostgreSQL
+    │   ├── library/, events/    # Библиотека и события пользователя
+    │   ├── mail/                # SMTP и надёжный почтовый outbox
+    │   └── playback/, recommendation/
+    ├── pkg/
+    │   ├── soundcloud/          # Go SDK для SoundCloud v2
+    │   ├── spotify/             # Go SDK для Spotify & Librespot Connect
+    │   └── ytdlp/               # Go SDK-обёртка над yt-dlp
+    ├── migrations/              # Встроенные SQL-миграции
+    ├── examples/                # Примеры SDK
+    ├── Dockerfile
+    └── go.mod
 ```
 
 ---
 
 ## 🚀 Быстрый старт
 
-### 1. Запуск REST API сервера
+### 1. Запуск локального стека
+
+Основной сценарий запуска идёт из корня репозитория, где находится `compose.yaml`:
 
 ```bash
-go run ./cmd/server -port=8080
+cd /path/to/mixora
+docker compose up --build -d
+docker compose ps
+
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/ready
 ```
 
-Сервер автоматически определит `yt-dlp`, извлечет `client_id` для SoundCloud и подключит Spotify Connect.
+Compose собирает `beckend/Dockerfile` и запускает API вместе с PostgreSQL, Redis и Mailpit. При старте API ждёт healthy-сервисы, применяет встроенные PostgreSQL-миграции и запускает почтовый worker. API доступен на `http://127.0.0.1:8080`, а письма в development видны в Mailpit на `http://127.0.0.1:8025`.
 
-#### Эндпоинты REST API:
+Для базового запуска **не нужны** SoundCloud или Spotify Client ID. SoundCloud автоматически получает текущий `client_id`, а Spotify умеет работать в Zero-Config режиме. `SOUNDCLOUD_CLIENT_ID`, `SOUNDCLOUD_AUTH_TOKEN`, `SPOTIFY_CLIENT_ID` и `SPOTIFY_CLIENT_SECRET` — только опциональные переопределения для прямого запуска Go-процесса; Compose-сервису их нужно явно передать в `environment`, если переопределение всё-таки нужно.
 
-##### Общие:
+Полезные команды:
+
+```bash
+docker compose logs -f api
+docker compose down
+```
+
+Для запуска Go-процесса без Docker нужны доступный PostgreSQL и обязательная `MIXORA_DATABASE_URL`; для отправки писем также нужен SMTP. Остальные app-layer переменные перечислены в корневом `.env.example`.
+
+### 2. Эндпоинты REST API
+
+#### App-layer Mixora
+
 | Метод | Эндпоинт | Описание |
 |---|---|---|
-| `GET` | `/health` | Статус готовности всех трех движков (`soundcloud`, `spotify`, `ytdlp`) |
+| `GET` | `/health` | Liveness API Mixora |
+| `GET` | `/ready` | Readiness API и доступность PostgreSQL |
+| `POST` | `/api/v1/auth/{register\|login\|logout}` | Регистрация и cookie-сессии |
+| `GET` | `/api/v1/auth/session` | Текущая сессия |
+| `GET/POST` | `/api/v1/auth/verify-email` | Подтверждение email |
+| `POST` | `/api/v1/auth/password/{request\|reset}` | Сброс пароля через mail outbox |
+| `GET/PUT` | `/api/v1/library` | Серверная библиотека пользователя |
+| `POST` | `/api/v1/events` | События прослушивания |
+| `POST` | `/api/v1/wave` | Подбор треков «Моей волны» |
+| `GET` | `/api/v1/playback/ws` | WebSocket-синхронизация плеера |
 
-##### 🟠 SoundCloud:
+#### 🟠 SoundCloud
 | Метод | Эндпоинт | Описание |
 |---|---|---|
 | `GET` | `/api/v1/resolve?url=<sc_url>` | Резолвит любую ссылку SoundCloud |
@@ -111,7 +127,7 @@ go run ./cmd/server -port=8080
 | `GET` | `/api/v1/charts/trending?genre=...` | Тренды и чарты |
 | `GET` | `/api/v1/search?q=<query>` | Поиск треков |
 
-##### 🟢 Spotify & Librespot Connect:
+#### 🟢 Spotify & Librespot Connect
 | Метод | Эндпоинт | Описание |
 |---|---|---|
 | `GET` | `/api/v1/spotify/resolve?url=<spotify_url>` | Резолвит любую ссылку `open.spotify.com` |
@@ -124,7 +140,7 @@ go run ./cmd/server -port=8080
 | `GET` | `/api/v1/spotify/connect/status` | Текущий статус воспроизведения Spotify Connect |
 | `POST` | `/api/v1/spotify/connect/player/{play\|pause\|next\|volume\|load}` | Управление плеером Connect |
 
-##### 🔴 Universal Extractor (YouTube, VK, Bandcamp via yt-dlp):
+#### 🔴 Universal Extractor (YouTube, VK, Bandcamp via yt-dlp)
 | Метод | Эндпоинт | Описание |
 |---|---|---|
 | `GET` | `/api/v1/extract?url=<url>` | **Универсальный экстрактор**: отдает название, автора, обложку и прямой CDN Audio URL для любого сайта |
@@ -135,7 +151,9 @@ go run ./cmd/server -port=8080
 
 ---
 
-### 2. Использование CLI
+### 3. Использование CLI
+
+Команды ниже выполняются из каталога `beckend`:
 
 ```bash
 # 1. Универсальный экстрактор для любых ссылок (YouTube, VK, Bandcamp)
@@ -166,10 +184,14 @@ go run ./cmd/cli lyrics "https://soundcloud.com/user/track-name"
 
 ## 🎧 Требования к окружению
 
-* **Go 1.25+**
-* **yt-dlp**: `brew install yt-dlp` (macOS) или `sudo apt install yt-dlp` (Linux)
-* **ffmpeg**: `brew install ffmpeg` (macOS) или `sudo apt install ffmpeg` (Linux)
-* **go-librespot** *(опционально для Spotify Connect)*: `brew install go-librespot`
+* **Docker с Compose plugin** — для рекомендуемого запуска всего app-layer стека.
+* **Go 1.27.1+** — для локальной сборки сервера, CLI и SDK.
+* **PostgreSQL** — обязателен для `cmd/server`, но уже включён в корневой Compose-стек.
+* **yt-dlp** *(опционально для Universal Extractor)*: `brew install yt-dlp` (macOS) или `sudo apt install yt-dlp` (Linux).
+* **ffmpeg** *(опционально для медиа-обработки)*: `brew install ffmpeg` (macOS) или `sudo apt install ffmpeg` (Linux).
+* **go-librespot** *(опционально для Spotify Connect)*: `brew install go-librespot`.
+
+Внешние бинарники `yt-dlp` и `go-librespot` не входят в текущий Docker image; без них сервер продолжает работать, а зависящие от них функции остаются отключёнными.
 
 ---
 

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -34,14 +35,45 @@ type Config struct {
 	SessionTTL      time.Duration
 }
 
+// Keep the HTTP layer coupled to behavior rather than storage implementations.
+// Config intentionally continues to accept the concrete production services;
+// these narrow interfaces make the transport contract testable without a
+// PostgreSQL or external music-service process.
+type authBackend interface {
+	Register(context.Context, string, string, string) (auth.Registration, error)
+	Login(context.Context, string, string, auth.SessionMetadata) (auth.Login, error)
+	Authenticate(context.Context, string) (auth.User, auth.Session, error)
+	Logout(context.Context, string) error
+	VerifyEmail(context.Context, string) (auth.User, error)
+	BeginPasswordReset(context.Context, string) (*auth.PasswordReset, error)
+	ResetPassword(context.Context, string, string) (auth.User, error)
+}
+
+type libraryBackend interface {
+	Get(context.Context, string) (library.Snapshot, error)
+	Put(context.Context, string, json.RawMessage) (library.Snapshot, error)
+}
+
+type eventBackend interface {
+	Add(context.Context, string, []events.Event) error
+}
+
+type mailBackend interface {
+	Enqueue(context.Context, mail.Message) (int64, error)
+}
+
+type recommendationBackend interface {
+	Recommend(context.Context, recommendation.Request) (recommendation.Result, error)
+}
+
 type Server struct {
 	db              *pgxpool.Pool
-	auth            *auth.Service
-	libraries       *library.Store
-	events          *events.Store
-	mailOutbox      *mail.Outbox
+	auth            authBackend
+	libraries       libraryBackend
+	events          eventBackend
+	mailOutbox      mailBackend
 	playback        *playback.Hub
-	recommendations *recommendation.Service
+	recommendations recommendationBackend
 	publicURL       string
 	cookieSecure    bool
 	sessionTTL      time.Duration
@@ -72,6 +104,10 @@ func New(config Config) (http.Handler, error) {
 		sessionTTL: config.SessionTTL,
 	}
 
+	return s.handler(config.MusicEngine), nil
+}
+
+func (s *Server) handler(musicEngine http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /ready", s.ready)
@@ -91,8 +127,8 @@ func New(config Config) (http.Handler, error) {
 	mux.Handle("POST /api/v1/events", s.requireAuth(http.HandlerFunc(s.addEvents)))
 	mux.Handle("POST /api/v1/wave", s.requireAuth(http.HandlerFunc(s.wave)))
 	mux.Handle("GET /api/v1/playback/ws", s.requireAuth(http.HandlerFunc(s.playbackWebSocket)))
-	mux.Handle("/", config.MusicEngine)
-	return middleware(mux), nil
+	mux.Handle("/", musicEngine)
+	return middleware(mux)
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {

@@ -26,6 +26,7 @@ export function pageKind(path) {
     return "details";
   if (["/404", "/not-found", "/unavailable"].includes(path)) return "error";
   if (path === "/oauth") return "oauth";
+  if (["/verify-email", "/reset-password"].includes(path)) return "auth_action";
   if (path === "/landing") return "landing";
   return routes.includes(path) ? "browse" : "error";
 }
