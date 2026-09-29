@@ -1,0 +1,30 @@
+{
+  "name": "mixora-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5174 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4174 --strictPort",
+    "desktop": "electron .",
+    "test": "node --test src/lib/*.test.js",
+    "format": "prettier --write src desktop vite.config.js",
+    "format:check": "prettier --check src desktop vite.config.js",
+    "styles:verify": "node scripts/verify-reference.mjs",
+    "styles:migrate": "node scripts/migrate-reference.mjs"
+  },
+  "dependencies": {
+    "hls.js": "1.6.5",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.7.0",
+    "electron": "^36.4.0",
+    "prettier": "^3.6.2",
+    "vite": "^7.0.0"
+  }
+}

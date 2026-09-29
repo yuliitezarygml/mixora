@@ -1,0 +1,220 @@
+{
+  "source": "../mixora-music-client/app",
+  "files": [
+    {
+      "path": "/_next/static/css/00dc84ae3c2bcf0b.css",
+      "sha256": "bda8f08ce0a5fae7c3ba6cfe8ce19de1d154bb68b8460f377983080275efba2b",
+      "bytes": 34137
+    },
+    {
+      "path": "/_next/static/css/8eb3e1dae3dc13a6.css",
+      "sha256": "e313ba516b265ef0a2fa75b2fa9f54ff0203ee62437624dbff4aa980fbc81619",
+      "bytes": 99147
+    },
+    {
+      "path": "/_next/static/css/7e44f4c04c74b7f3.css",
+      "sha256": "d7c52998a02991fabaa9e29ce789e4b2cdbdf329337d85c9a16aac6ae535690c",
+      "bytes": 7487
+    },
+    {
+      "path": "/_next/static/css/d00557cb4a20cfb2.css",
+      "sha256": "7f9c19eccb7bfc10fbc4aac0f95774be52285509e090f568714af81ddc4097b2",
+      "bytes": 102038
+    },
+    {
+      "path": "/_next/static/css/80d586086b493f10.css",
+      "sha256": "729543237e86302eff9af96dd0ba179d2d2ac1adc5db395ef212c29471b67c06",
+      "bytes": 19288
+    },
+    {
+      "path": "/_next/static/css/16b33953decb74d5.css",
+      "sha256": "3c3b64d1c0159dec20727e17616b1226f6eaccd5481f76f74032c178b4a26d66",
+      "bytes": 101820
+    },
+    {
+      "path": "/_next/static/css/c47dda2d80d517ad.css",
+      "sha256": "a559866e519b9722b5b4bd9a1825791d10460070c1005321c3c1e35fdff92a36",
+      "bytes": 8384
+    },
+    {
+      "path": "/_next/static/css/5dd5d32c74320ee9.css",
+      "sha256": "f604dc69919e6b5e8a252b30c4bcac5eae2325fda022921fb4f02fb30c2f03b8",
+      "bytes": 8927
+    },
+    {
+      "path": "/_next/static/css/dc0a615619bad295.css",
+      "sha256": "662dcdeab59df6c5157c20ed44f2374fb863e8ed809b0e4cf7dc8e2fb85d046c",
+      "bytes": 101540
+    },
+    {
+      "path": "/_next/static/css/7abbf99ff3a46e5e.css",
+      "sha256": "891ba1b97ae33c3dabd71e89f7a66daf9ff3b5503652ad679a2d1e213008f910",
+      "bytes": 1407
+    },
+    {
+      "path": "/_next/static/css/4351ace86b792f2d.css",
+      "sha256": "33c9cd53f72f7d9c4e4971694dc6502291693534f81b26372b59f2736be41fe0",
+      "bytes": 8250
+    },
+    {
+      "path": "/_next/static/css/6a0c13902cf2ae2d.css",
+      "sha256": "9445420974aa81d721d0f26b8e0628b23e794c130b115f162fd875cdb5d9893b",
+      "bytes": 48726
+    },
+    {
+      "path": "/_next/static/css/2f1e2bcb7d9afcf3.css",
+      "sha256": "37cd00e5dfea6961a9b46c53c02a631348da7c00d3beb1488babc577249fe738",
+      "bytes": 4437
+    },
+    {
+      "path": "/_next/static/css/902d32ff0f5b45a3.css",
+      "sha256": "f070d6988eb288d3a53b2385697dd84c6ed697858a7858008c7af71cf4184baf",
+      "bytes": 14835
+    },
+    {
+      "path": "/_next/static/css/b1cc61f878150e78.css",
+      "sha256": "aaec90a7b3b2810b90781fca43c76d11b40d519545dfa1554592a38f16012610",
+      "bytes": 10907
+    },
+    {
+      "path": "/_next/static/css/8975050455d63acc.css",
+      "sha256": "7b87852d240d7be8a8fd1562ed86414ed45c4730b320a6fb676756538546eb34",
+      "bytes": 6818
+    },
+    {
+      "path": "/_next/static/css/cfb2e8ac974ec1fa.css",
+      "sha256": "ebd890e58fcdcaaede63d8a837a6c86c61726004d25f9aaec5c4b3f0cb0742ee",
+      "bytes": 78533
+    },
+    {
+      "path": "/_next/static/css/8e2988c85de8705f.css",
+      "sha256": "1f96cfd9363c54af2fdf85a51da4557369dd4e844e6780da59251cd7c8d4cf05",
+      "bytes": 74666
+    },
+    {
+      "path": "/_next/static/css/0843384d15456a41.css",
+      "sha256": "f091a9c238ab3a9107244898a08a0e91e9acd44ea1b3eab75fdc030f49780607",
+      "bytes": 8551
+    },
+    {
+      "path": "/_next/static/css/6a734589f39dcafa.css",
+      "sha256": "7ac8d0b968bb5846ee328f03bf42ff1c108e4c9be319d05b7cdba95406f5b135",
+      "bytes": 11924
+    },
+    {
+      "path": "/_next/static/css/6b3b0eb2aef1b8bd.css",
+      "sha256": "16f210cbb85293ea3a4246a0f7a4fa5f30eb917aacae046cf4ac3ca2b046081a",
+      "bytes": 906
+    },
+    {
+      "path": "/_next/static/css/de1d78f62f399c14.css",
+      "sha256": "10e582fab1a718f90191695d079926898121d6cb2261766716b8ac19415ffcd3",
+      "bytes": 102268
+    },
+    {
+      "path": "/_next/static/css/3da19631624178b8.css",
+      "sha256": "a1d26dbbd9db2dd837cf0b63ab8a5fb5a34df550d66c5048b674db3ffb07d33c",
+      "bytes": 11512
+    },
+    {
+      "path": "/_next/static/css/b46bdb72e537c85b.css",
+      "sha256": "71733ec73456169583f0e8842e3fd85aa3ea7bfbf6ae2e1c58159b398daa4f74",
+      "bytes": 711
+    },
+    {
+      "path": "/_next/static/css/6797216c79153119.css",
+      "sha256": "bf3e563d60163fa24ea08fd9cb3321386b0fa0c865dd45e5b2b00be4ba8a4373",
+      "bytes": 5569
+    },
+    {
+      "path": "/_next/static/css/c15511676aa51e26.css",
+      "sha256": "e2f80bceeba995e203e25a5fb24a008be702ad1069054192d21c78956e9033dc",
+      "bytes": 6054
+    },
+    {
+      "path": "/_next/static/css/5141bd12fad66891.css",
+      "sha256": "5627ad5e74d6e8792cca94a6f92fd2d20a2ed81c39aa2a6ce6237ce22d4901b2",
+      "bytes": 12735
+    },
+    {
+      "path": "/_next/static/css/f700fb76bd19d9d9.css",
+      "sha256": "107453dddce8d6caa514f3a52303d351fafa54dfc69e773bbd78dc84d300dea3",
+      "bytes": 7181
+    },
+    {
+      "path": "/_next/static/css/d17f9af53f2f9a4f.css",
+      "sha256": "e1560df71a41928720939360ffa656d98e51ad8abb095bbb5ad357ffcec3aff4",
+      "bytes": 2262
+    },
+    {
+      "path": "/_next/static/css/206382c9a751cf13.css",
+      "sha256": "eac1bc607a681fd1b23e3fb6f4be0682c7ed1c2ce073ac6ed67a8a80be2c8668",
+      "bytes": 686
+    },
+    {
+      "path": "/_next/static/css/62d3ddd7c50364fa.css",
+      "sha256": "6e638f27e114318fcb381f42793cd166a60a7a19e17373e5238886af5211eed4",
+      "bytes": 13562
+    },
+    {
+      "path": "/_next/static/css/0793a93c4e0b1284.css",
+      "sha256": "b0bd94b3600b8e0d632af4c9891c919feb0ef46ee107603d6d4eb61106f15d17",
+      "bytes": 11700
+    },
+    {
+      "path": "/_next/static/css/15bae14bff48bbd3.css",
+      "sha256": "a1e818ba1425286067d6fd672fe1142ceb09572b56df0ef602c39af1f8875ef3",
+      "bytes": 2232
+    },
+    {
+      "path": "/_next/static/css/2fb610a0f4d85c27.css",
+      "sha256": "1ecdedeaa849250e4cef9fdf05858ffb9e2eda30f541bcf0c8bba65809741b20",
+      "bytes": 649
+    },
+    {
+      "path": "/_next/static/css/b30e8199bb697543.css",
+      "sha256": "02142b4870da6aa24ee482359e5dc54038299c78a3f3eb8e2aa625b8c49ee6fc",
+      "bytes": 12427
+    },
+    {
+      "path": "/_next/static/css/7a970786e9ea4fc1.css",
+      "sha256": "11548ea9609b3ad49e048dcf9af2f4b23daad02b775f67cc664b67a6881e0556",
+      "bytes": 1467
+    },
+    {
+      "path": "/_next/static/css/2b12a1ee93969d38.css",
+      "sha256": "2a72988e751595adac87b0c24124471a0387481c3fc63e5d13932284bdc3cf5e",
+      "bytes": 5948
+    },
+    {
+      "path": "/_next/static/css/0f0a839e881c8638.css",
+      "sha256": "db092acb0255a189c2f61a03af98f439a91c5b084435708a0a4805084edff2cd",
+      "bytes": 4727
+    },
+    {
+      "path": "/_next/static/css/80ac89b89040b12c.css",
+      "sha256": "081c43da30ee6704ac6697f96a95812d406a386868619efe0236ba91b76b9a35",
+      "bytes": 3281
+    },
+    {
+      "path": "/_next/static/css/c4c53a2077cfba32.css",
+      "sha256": "3991799774303a6ef49c6c52f72ec97fcdb3e6c16cc7c044fdc5ac2289f45568",
+      "bytes": 1118
+    },
+    {
+      "path": "/_next/static/css/e3c5cae5db3b587e.css",
+      "sha256": "a1385fc51eeb66b07be79ee06efd49cb3acac2a1c6d291cdefe36a0474e4eaa6",
+      "bytes": 36
+    },
+    {
+      "path": "/_next/static/css/eeb85be8956d30af.css",
+      "sha256": "a5586acfbd47247f5c31d1e1c229e1a3f39b5f506f6c6daba305a524f104b473",
+      "bytes": 9879
+    },
+    {
+      "path": "/styles/fonts.css",
+      "sha256": "6d61bbb7a5b59a1f3a2d30dfedb7d16e67ffaf59f49293c57fb1c567f99d0042",
+      "bytes": 4122
+    }
+  ]
+}

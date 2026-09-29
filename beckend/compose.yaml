@@ -1,0 +1,37 @@
+name: mixora
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: mixora
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: mixora
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mixora -d mixora"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+  api:
+    build: .
+    environment:
+      HTTP_ADDR: 0.0.0.0:8080
+      DATABASE_URL: postgres://mixora:${POSTGRES_PASSWORD}@db:5432/mixora?sslmode=disable
+      MEDIA_DIR: /app/storage
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:5173}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SOUNDCLOUD_CLIENT_ID: ${SOUNDCLOUD_CLIENT_ID:-}
+      SOUNDCLOUD_CLIENT_SECRET: ${SOUNDCLOUD_CLIENT_SECRET:-}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    volumes:
+      - ./storage:/app/storage:ro
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  postgres_data:

@@ -1,0 +1,16 @@
+{
+  "name": "mixora-music-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "desktop": "electron .",
+    "test": "node --test src/lib/*.test.js"
+  },
+  "dependencies": {"react":"^19.0.0","react-dom":"^19.0.0","react-router-dom":"^7.0.0","hls.js":"1.6.5"},
+  "devDependencies": {"vite":"^7.0.0","@vitejs/plugin-react":"^4.7.0","electron":"^36.4.0"}
+}
