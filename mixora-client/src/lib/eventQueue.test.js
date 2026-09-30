@@ -29,6 +29,18 @@ test("event queue sends bounded batches and only acknowledges delivered ids", ()
   assert.equal(remaining[0].idempotency_key, "100");
 });
 
+test("offline queue migrates legacy SoundCloud URNs on delivery", () => {
+  const [event] = eventBatch([
+    {
+      idempotency_key: "legacy-1",
+      type: "play",
+      track_source: "soundcloud",
+      track_id: "soundcloud:tracks:42",
+    },
+  ]);
+  assert.equal(event.track_id, "42");
+});
+
 test("event queue is isolated per account", () => {
   assert.equal(eventQueueKey("user-a"), "mixora-ui:event-queue:user-a");
   assert.notEqual(eventQueueKey("user-a"), eventQueueKey("user-b"));

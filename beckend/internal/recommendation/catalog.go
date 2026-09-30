@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/iulian/soundcloud-go/internal/embedding"
 	"github.com/iulian/soundcloud-go/internal/music"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -38,12 +39,24 @@ func (c *PostgresCatalog) Save(ctx context.Context, tracks []music.Track) error 
 		if err != nil {
 			return fmt.Errorf("encode catalog track: %w", err)
 		}
+		embeddingInput, embeddingHash := embedding.TrackDocument(track)
 		batch.Queue(`
-			INSERT INTO track_catalog(track_source, track_id, payload)
-			VALUES ($1,$2,$3)
+			INSERT INTO track_catalog(
+				track_source, track_id, payload, embedding_input, embedding_input_hash
+			)
+			VALUES ($1,$2,$3,$4,$5)
 			ON CONFLICT (track_source, track_id) DO UPDATE
-			SET payload=EXCLUDED.payload, updated_at=now()
-		`, track.Source, track.ID, payload)
+			SET payload=EXCLUDED.payload,
+			    embedding_input=EXCLUDED.embedding_input,
+			    embedding_input_hash=EXCLUDED.embedding_input_hash,
+			    embedding_available_at=CASE
+			      WHEN track_catalog.embedding_input_hash IS DISTINCT FROM EXCLUDED.embedding_input_hash
+			      THEN now() ELSE track_catalog.embedding_available_at END,
+			    embedding_claimed_until=CASE
+			      WHEN track_catalog.embedding_input_hash IS DISTINCT FROM EXCLUDED.embedding_input_hash
+			      THEN NULL ELSE track_catalog.embedding_claimed_until END,
+			    updated_at=now()
+		`, track.Source, track.ID, payload, embeddingInput, embeddingHash)
 	}
 	if batch.Len() == 0 {
 		return nil

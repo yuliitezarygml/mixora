@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iulian/soundcloud-go/internal/music"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -46,7 +47,9 @@ func New(db *pgxpool.Pool) *Store {
 }
 
 func Validate(event Event) error {
-	event.Type = strings.TrimSpace(event.Type)
+	if strings.TrimSpace(event.Key) == "" {
+		return fmt.Errorf("idempotency_key is required")
+	}
 	if !allowedTypes[event.Type] {
 		return fmt.Errorf("unsupported event type %q", event.Type)
 	}
@@ -71,6 +74,10 @@ func (s *Store) Add(ctx context.Context, userID string, input []Event) error {
 	}
 	batch := &pgx.Batch{}
 	for _, event := range input {
+		event.Key = strings.TrimSpace(event.Key)
+		event.Type = strings.TrimSpace(event.Type)
+		event.Source = strings.ToLower(strings.TrimSpace(event.Source))
+		event.TrackID = music.CanonicalTrackID(event.Source, event.TrackID)
 		if err := Validate(event); err != nil {
 			return err
 		}

@@ -16,6 +16,7 @@ import (
 	"github.com/iulian/soundcloud-go/internal/auth"
 	"github.com/iulian/soundcloud-go/internal/config"
 	"github.com/iulian/soundcloud-go/internal/database"
+	"github.com/iulian/soundcloud-go/internal/embedding"
 	"github.com/iulian/soundcloud-go/internal/events"
 	gorseapi "github.com/iulian/soundcloud-go/internal/gorse"
 	"github.com/iulian/soundcloud-go/internal/httpapi"
@@ -100,8 +101,9 @@ func main() {
 	}()
 
 	eventStore := events.New(db)
+	catalogStore := recommendation.NewCatalog(db)
 	recommendationOptions := []recommendation.Option{
-		recommendation.WithCatalog(recommendation.NewCatalog(db)),
+		recommendation.WithCatalog(catalogStore),
 	}
 	if cfg.GorseURL != "" {
 		gorseClient, err := gorseapi.New(gorseapi.Config{
@@ -125,6 +127,39 @@ func main() {
 		log.Printf("[INFO] Gorse recommendations enabled at %s", cfg.GorseURL)
 	} else {
 		log.Println("[INFO] Gorse recommendations disabled; Wave uses rules-v0 fallback")
+	}
+	if cfg.EmbeddingURL != "" {
+		embeddingClient, err := embedding.NewClient(embedding.ClientConfig{
+			BaseURL: cfg.EmbeddingURL, Model: cfg.EmbeddingModel,
+			Dimensions: cfg.EmbeddingDimensions, Timeout: cfg.EmbeddingTimeout,
+		})
+		if err != nil {
+			log.Fatalf("[FATAL] Initialize embedding client: %v", err)
+		}
+		embeddingStore, err := embedding.NewStore(db, cfg.EmbeddingVersion, cfg.EmbeddingDimensions)
+		if err != nil {
+			log.Fatalf("[FATAL] Initialize embedding store: %v", err)
+		}
+		contentRecommender, err := embedding.NewRecommender(embeddingStore, embeddingClient, cfg.EmbeddingVersion)
+		if err != nil {
+			log.Fatalf("[FATAL] Initialize content recommender: %v", err)
+		}
+		recommendationOptions = append(recommendationOptions, recommendation.WithContentBased(contentRecommender))
+		embeddingOptions := embedding.DefaultWorkerOptions()
+		embeddingOptions.BatchSize = cfg.EmbeddingBatchSize
+		embeddingOptions.OnError = func(err error) { log.Printf("[WARN] Embedding worker: %v", err) }
+		embeddingWorker, err := embedding.NewWorker(embeddingStore, embeddingClient, embeddingOptions)
+		if err != nil {
+			log.Fatalf("[FATAL] Initialize embedding worker: %v", err)
+		}
+		go func() {
+			if err := embeddingWorker.Run(workerCtx); err != nil && err != context.Canceled {
+				log.Printf("[WARN] Embedding worker stopped: %v", err)
+			}
+		}()
+		log.Printf("[INFO] Local embeddings enabled: %s (%s)", cfg.EmbeddingModel, cfg.EmbeddingVersion)
+	} else {
+		log.Println("[INFO] Local embeddings disabled; Wave continues without content-v2")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -205,6 +240,7 @@ func main() {
 	// 4. Keep the existing music engine intact and mount the Mixora app API in
 	// front of it. Unknown routes fall through to the engine router.
 	musicHandler := api.NewHandler(scClient, spClient, ytClient)
+	musicHandler.SetTrackObserver(catalogStore)
 	musicRouter := api.NewRouter(musicHandler)
 	router, err := httpapi.New(httpapi.Config{
 		Database:        db,

@@ -122,6 +122,7 @@ export function AppProvider({ children }) {
     waveRound = useRef(0),
     waveFetching = useRef(false),
     waveSession = useRef(""),
+    waveTrackSessions = useRef(new Map()),
     heard = useRef(false),
     saveTimer = useRef(0),
     userRef = useRef(null);
@@ -184,18 +185,16 @@ export function AppProvider({ children }) {
       }
     }
   };
-  const enqueueListeningEvents = (input, associateWave = false) => {
+  const enqueueListeningEvents = (input, sessionId = "") => {
     const userId = userRef.current?.id;
     if (!userId || !input?.length) return;
     const key = eventQueueKey(userId);
     let queued = readStorage(key, []);
     for (const raw of input) {
-      const event = associateWave
-        ? withWaveSession(raw, waveSession.current)
-        : raw;
+      const event = sessionId ? withWaveSession(raw, sessionId) : raw;
       queued = enqueueEvent(queued, event);
-      const feedbackPath = associateWave
-        ? waveFeedbackPath(waveSession.current, event.type)
+      const feedbackPath = sessionId
+        ? waveFeedbackPath(sessionId, event.type)
         : "";
       if (feedbackPath) void post(feedbackPath, event).catch(() => {});
     }
@@ -204,7 +203,10 @@ export function AppProvider({ children }) {
   };
   const recordEvent = (type, track, extra = {}) => {
     const event = trackListeningEvent(type, track, extra);
-    if (event) enqueueListeningEvents([event], true);
+    const sessionId = track
+      ? waveTrackSessions.current.get(trackKey(track)) || ""
+      : "";
+    if (event) enqueueListeningEvents([event], sessionId);
   };
   const recordSearch = (query, tracks) =>
     enqueueListeningEvents(searchListeningEvents(query, tracks));
@@ -233,6 +235,7 @@ export function AppProvider({ children }) {
     if (origin !== "wave") {
       waveGeneration.current++;
       waveSession.current = "";
+      waveTrackSessions.current.clear();
       setWaveModelVersion("rules-v0");
       setWaveActive(false);
       setWaveBusy(false);
@@ -302,12 +305,14 @@ export function AppProvider({ children }) {
       setWaveBusy(true);
       const generation = waveGeneration.current;
       try {
-        const tracks = await loadWave(
+        const result = await loadWave(
           wavePreferences,
           waveContext,
           queue.slice(-12),
         );
         if (generation !== waveGeneration.current) return;
+        applyWaveResult(result);
+        const tracks = result.tracks;
         if (tracks.length) {
           setQueue((previous) => [...previous, ...tracks]);
           setIndex(queue.length);
@@ -355,19 +360,37 @@ export function AppProvider({ children }) {
         seeds,
       });
       const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
-      waveSession.current =
-        tracks.length && typeof data?.session_id === "string"
-          ? data.session_id
-          : "";
-      setWaveModelVersion(data?.model_version || "rules-v0");
-      if (tracks.length)
-        setCatalog((previous) => uniqueTracks([...previous, ...tracks]));
-      return tracks;
+      return {
+        tracks,
+        sessionId:
+          tracks.length && typeof data?.session_id === "string"
+            ? data.session_id
+            : "",
+        modelVersion: data?.model_version || "rules-v0",
+        error: null,
+      };
     } catch (error) {
-      waveSession.current = "";
-      setWaveModelVersion("rules-v0");
-      if (error.status !== 503) toast(error.message);
-      return local();
+      return {
+        tracks: local(),
+        sessionId: "",
+        modelVersion: "rules-v0",
+        error,
+      };
+    }
+  };
+  const applyWaveResult = (result) => {
+    waveSession.current = result.sessionId;
+    setWaveModelVersion(result.modelVersion);
+    if (result.sessionId) {
+      for (const track of result.tracks) {
+        waveTrackSessions.current.set(trackKey(track), result.sessionId);
+      }
+    }
+    if (result.tracks.length) {
+      setCatalog((previous) => uniqueTracks([...previous, ...result.tracks]));
+    }
+    if (result.error?.status !== 503 && result.error?.message) {
+      toast(result.error.message);
     }
   };
   const startWave = async (context = null, preferences = wavePreferences) => {
@@ -378,13 +401,16 @@ export function AppProvider({ children }) {
     }
     const generation = ++waveGeneration.current;
     waveSession.current = "";
+    waveTrackSessions.current.clear();
     setWaveModelVersion("rules-v0");
     setWaveBusy(true);
     setWaveContext(context);
     setSettings({ wave: preferences });
     try {
-      const tracks = await loadWave(preferences, context);
+      const result = await loadWave(preferences, context);
       if (generation !== waveGeneration.current) return;
+      applyWaveResult(result);
+      const tracks = result.tracks;
       if (!tracks.length) {
         toast(
           "Для этих настроек нет треков. Попробуйте другой характер или язык.",
@@ -576,6 +602,7 @@ export function AppProvider({ children }) {
       audioRef.current?.pause();
       waveGeneration.current++;
       waveSession.current = "";
+      waveTrackSessions.current.clear();
       setWaveModelVersion("rules-v0");
       setWaveActive(false);
       setWaveBusy(false);

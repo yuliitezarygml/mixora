@@ -22,6 +22,7 @@ test("uses artist metadata instead of uploader, preserving original Unicode titl
   assert.equal(track.title, "Бейба судьба");
   assert.equal(track.artist, "Miyagi & Эндшпиль");
   assert.equal(track.duration, 1);
+  assert.equal(track.id, "1");
 });
 test("falls back from empty artist metadata without destroying names in other languages", () => {
   const track = soundcloudTrack({
@@ -43,6 +44,7 @@ test("playlist keeps tracks that arrive with only an id", () => {
   assert.equal(playlist.tracks[0].id, "42");
   assert.equal(playlist.tracks[0].title, "Без названия");
   assert.equal(playlist.tracks[1].title, "Утро");
+  assert.equal(playlist.tracks[1].id, "7");
 });
 
 test("unwraps the backend Response envelope while preserving plain payloads", () => {

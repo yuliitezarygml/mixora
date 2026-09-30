@@ -1,11 +1,14 @@
 package music
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/iulian/soundcloud-go/pkg/soundcloud/models"
 )
+
+var trailingNumericID = regexp.MustCompile(`(?:^|:|/)([0-9]+)$`)
 
 // Track is the provider-neutral shape consumed by the Mixora client.
 type Track struct {
@@ -30,6 +33,25 @@ type Track struct {
 
 func (t Track) Key() string {
 	return t.Source + ":" + t.ID
+}
+
+// CanonicalTrack normalizes legacy public representations at the app boundary.
+// The client still treats the resulting reference as opaque.
+func CanonicalTrack(track Track) Track {
+	track.Source = strings.ToLower(strings.TrimSpace(track.Source))
+	track.ID = CanonicalTrackID(track.Source, track.ID)
+	track.ArtistID = CanonicalTrackID(track.Source, track.ArtistID)
+	return track
+}
+
+func CanonicalTrackID(source, value string) string {
+	value = strings.TrimSpace(value)
+	if strings.EqualFold(strings.TrimSpace(source), "soundcloud") {
+		if match := trailingNumericID.FindStringSubmatch(strings.TrimRight(value, "/")); len(match) == 2 {
+			return match[1]
+		}
+	}
+	return value
 }
 
 func FromSoundCloud(track models.Track) Track {

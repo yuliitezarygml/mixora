@@ -42,3 +42,31 @@ func TestPersonalizePromotesKnownItemsAndKeepsFallback(t *testing.T) {
 		t.Fatalf("personalized order = %#v", got)
 	}
 }
+
+func TestBlendRankingsReservesEveryThirdPositionForContent(t *testing.T) {
+	t.Parallel()
+	got := BlendRankings(
+		[]string{"track:1", "track:2", "track:3", "track:4"},
+		[]string{"track:c1", "track:2", "track:c2"},
+		7,
+	)
+	want := []string{"track:1", "track:2", "track:c1", "track:3", "track:4", "track:c2"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestModelVersionDescribesActiveLayers(t *testing.T) {
+	t.Parallel()
+	if got := modelVersion(false, ""); got != "rules-v0" {
+		t.Fatalf("rules model = %q", got)
+	}
+	if got := modelVersion(true, "embeddinggemma-q4-768-doc-v1"); got != "gorse-v1+embeddinggemma-q4-768-doc-v1+rules-v0" {
+		t.Fatalf("hybrid model = %q", got)
+	}
+}

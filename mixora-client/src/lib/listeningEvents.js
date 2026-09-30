@@ -1,13 +1,20 @@
 const eventID = () => crypto.randomUUID();
 const timestamp = () => new Date().toISOString();
 
+const eventTrackId = (track) => {
+  const value = String(track?.id ?? "").trim();
+  if ((track?.source || "music").toLowerCase() !== "soundcloud") return value;
+  return value.match(/(?:^|:|\/)(\d+)$/)?.[1] || value;
+};
+
 export function trackListeningEvent(type, track, extra = {}, options = {}) {
-  if (!type || !track?.id) return null;
+  const trackId = eventTrackId(track);
+  if (!type || !trackId) return null;
   return {
     idempotency_key: (options.id || eventID)(),
     type,
     track_source: track.source || "music",
-    track_id: String(track.id),
+    track_id: trackId,
     occurred_at: (options.now || timestamp)(),
     ...extra,
   };
@@ -39,7 +46,7 @@ export function searchListeningEvents(query, tracks = [], options = {}) {
       idempotency_key: id(),
       type: "impression",
       track_source: track.source || "music",
-      track_id: String(track.id),
+      track_id: eventTrackId(track),
       occurred_at: occurredAt,
       context: { ...context, rank: rank + 1, surface: "search" },
     })),

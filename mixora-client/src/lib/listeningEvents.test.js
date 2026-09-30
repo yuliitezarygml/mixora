@@ -32,6 +32,16 @@ test("track events use provider-neutral references", () => {
   );
 });
 
+test("legacy SoundCloud URNs are canonicalized before feedback", () => {
+  const event = trackListeningEvent(
+    "like",
+    { id: "soundcloud:tracks:1534086151", source: "soundcloud" },
+    {},
+    { id: () => "event-legacy", now: () => "2026-09-30T00:00:00.000Z" },
+  );
+  assert.equal(event.track_id, "1534086151");
+});
+
 test("search creates one query event and bounded result impressions", () => {
   let value = 0;
   const events = searchListeningEvents(

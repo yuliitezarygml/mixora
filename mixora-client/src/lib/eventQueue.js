@@ -1,6 +1,13 @@
 const MAX_QUEUED_EVENTS = 500;
 const EVENT_BATCH_SIZE = 100;
 
+const canonicalEvent = (event) => {
+  if (event?.track_source?.toLowerCase() !== "soundcloud") return event;
+  const raw = String(event.track_id || "").trim();
+  const id = raw.match(/(?:^|:|\/)(\d+)$/)?.[1] || raw;
+  return id === raw ? event : { ...event, track_id: id };
+};
+
 export function enqueueEvent(queue, event, limit = MAX_QUEUED_EVENTS) {
   const previous = Array.isArray(queue) ? queue : [];
   if (!event?.idempotency_key) return previous.slice(-limit);
@@ -13,7 +20,8 @@ export function enqueueEvent(queue, event, limit = MAX_QUEUED_EVENTS) {
 export function eventBatch(queue, limit = EVENT_BATCH_SIZE) {
   return (Array.isArray(queue) ? queue : [])
     .filter((event) => event?.idempotency_key && event?.type)
-    .slice(0, limit);
+    .slice(0, limit)
+    .map(canonicalEvent);
 }
 
 export function acknowledgeEvents(queue, delivered) {

@@ -12,11 +12,12 @@ func TestValidate(t *testing.T) {
 		event   Event
 		wantErr bool
 	}{
-		{"play", Event{Type: "play", Source: "soundcloud", TrackID: "12"}, false},
-		{"search", Event{Type: "search", Context: json.RawMessage(`{"q":"jazz"}`)}, false},
-		{"missing track", Event{Type: "complete", Source: "soundcloud"}, true},
-		{"unknown", Event{Type: "opened_player", Source: "soundcloud", TrackID: "12"}, true},
-		{"invalid context", Event{Type: "play", Source: "soundcloud", TrackID: "12", Context: json.RawMessage(`{`)}, true},
+		{"play", Event{Key: "event-1", Type: "play", Source: "soundcloud", TrackID: "12"}, false},
+		{"search", Event{Key: "event-2", Type: "search", Context: json.RawMessage(`{"q":"jazz"}`)}, false},
+		{"missing key", Event{Type: "play", Source: "soundcloud", TrackID: "12"}, true},
+		{"missing track", Event{Key: "event-3", Type: "complete", Source: "soundcloud"}, true},
+		{"unknown", Event{Key: "event-4", Type: "opened_player", Source: "soundcloud", TrackID: "12"}, true},
+		{"invalid context", Event{Key: "event-5", Type: "play", Source: "soundcloud", TrackID: "12", Context: json.RawMessage(`{`)}, true},
 	}
 	for _, test := range tests {
 		test := test

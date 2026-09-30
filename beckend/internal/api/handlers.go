@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/iulian/soundcloud-go/internal/music"
 	"github.com/iulian/soundcloud-go/pkg/soundcloud"
 	"github.com/iulian/soundcloud-go/pkg/spotify"
 	"github.com/iulian/soundcloud-go/pkg/ytdlp"
@@ -16,6 +18,11 @@ type Handler struct {
 	client  *soundcloud.Client
 	spotify *spotify.Client
 	ytdlp   *ytdlp.Client
+	tracks  TrackObserver
+}
+
+type TrackObserver interface {
+	Save(context.Context, []music.Track) error
 }
 
 // NewHandler creates a new unified API Handler instance.
@@ -25,6 +32,12 @@ func NewHandler(client *soundcloud.Client, spClient *spotify.Client, ytClient *y
 		spotify: spClient,
 		ytdlp:   ytClient,
 	}
+}
+
+// SetTrackObserver lets the app layer index provider-verified results without
+// changing the music engine response contract.
+func (h *Handler) SetTrackObserver(observer TrackObserver) {
+	h.tracks = observer
 }
 
 // HealthHandler returns API health status for all services.
@@ -319,6 +332,13 @@ func (h *Handler) SearchHandler(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			Error(w, http.StatusInternalServerError, err.Error())
 			return
+		}
+		if h.tracks != nil {
+			tracks := make([]music.Track, 0, len(res.Collection))
+			for _, raw := range res.Collection {
+				tracks = append(tracks, music.FromSoundCloud(raw))
+			}
+			_ = h.tracks.Save(r.Context(), tracks)
 		}
 		JSON(w, http.StatusOK, res)
 	case "users":

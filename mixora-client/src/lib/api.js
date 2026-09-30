@@ -110,7 +110,7 @@ const displayName = (value) =>
   typeof value === "string" ? value.trim().normalize("NFC") : "";
 export function soundcloudTrack(t) {
   return {
-    id: String(t.urn || t.id),
+    id: soundcloudResourceId(t.id ?? t.urn),
     source: "soundcloud",
     title: displayName(t.title) || "Без названия",
     artist:
@@ -118,7 +118,10 @@ export function soundcloudTrack(t) {
       displayName(t.publisher_metadata?.artist) ||
       displayName(t.user?.username) ||
       "Исполнитель",
-    artistId: String(t.user?.urn || t.user?.id || ""),
+    artistId:
+      t.user?.id != null || t.user?.urn
+        ? soundcloudResourceId(t.user.id ?? t.user.urn)
+        : "",
     artwork: t.artwork_url || t.user?.avatar_url || "",
     duration: (t.duration || 0) / 1000,
     explicit: t.explicit === true,
@@ -139,7 +142,7 @@ export const collectionItems = (data) => {
 };
 export function soundcloudArtist(data) {
   return {
-    id: String(data.urn || data.id),
+    id: soundcloudResourceId(data.id ?? data.urn),
     name: displayName(data.username),
     artwork: data.avatar_url || "",
     description: data.description || "",
@@ -149,12 +152,15 @@ export function soundcloudArtist(data) {
 }
 export function soundcloudPlaylist(data) {
   return {
-    id: String(data.urn || data.id),
+    id: soundcloudResourceId(data.id ?? data.urn),
     name: displayName(data.title),
     artwork: data.artwork_url || data.tracks?.[0]?.artwork_url || "",
     description: data.description || "",
     artist: displayName(data.user?.username),
-    artistId: String(data.user?.urn || data.user?.id || ""),
+    artistId:
+      data.user?.id != null || data.user?.urn
+        ? soundcloudResourceId(data.user.id ?? data.user.urn)
+        : "",
     tracks: (data.tracks || [])
       .filter((t) => t && (t.title || t.urn || t.id))
       .map(soundcloudTrack),

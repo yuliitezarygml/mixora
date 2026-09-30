@@ -76,6 +76,34 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.34.1}
+    profiles: ["embeddings"]
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    ports:
+      - "127.0.0.1:${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - mixora_ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "OLLAMA_HOST=http://127.0.0.1:11434 ollama list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  ollama-pull:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.34.1}
+    profiles: ["embeddings"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    command: ["pull", "${MIXORA_EMBEDDINGS_MODEL:-embeddinggemma:300m-qat-q4_0}"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build:
       context: ./beckend
@@ -94,6 +122,12 @@ services:
       MIXORA_GORSE_URL: ${MIXORA_GORSE_URL:-}
       MIXORA_GORSE_API_KEY: ${GORSE_API_KEY:-mixora-local-gorse-key}
       MIXORA_GORSE_TIMEOUT: ${MIXORA_GORSE_TIMEOUT:-3s}
+      MIXORA_EMBEDDINGS_URL: ${MIXORA_EMBEDDINGS_URL:-}
+      MIXORA_EMBEDDINGS_MODEL: ${MIXORA_EMBEDDINGS_MODEL:-embeddinggemma:300m-qat-q4_0}
+      MIXORA_EMBEDDINGS_VERSION: ${MIXORA_EMBEDDINGS_VERSION:-embeddinggemma-q4-768-doc-v1}
+      MIXORA_EMBEDDINGS_DIMENSIONS: ${MIXORA_EMBEDDINGS_DIMENSIONS:-768}
+      MIXORA_EMBEDDINGS_TIMEOUT: ${MIXORA_EMBEDDINGS_TIMEOUT:-2m}
+      MIXORA_EMBEDDINGS_BATCH_SIZE: ${MIXORA_EMBEDDINGS_BATCH_SIZE:-16}
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
     depends_on:
@@ -103,6 +137,9 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+        required: ${MIXORA_EMBEDDINGS_REQUIRED:-false}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/ready"]
       interval: 10s
@@ -114,3 +151,4 @@ volumes:
   mixora_postgres:
   mixora_redis:
   mixora_gorse:
+  mixora_ollama:
