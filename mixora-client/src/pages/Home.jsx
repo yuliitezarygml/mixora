@@ -5,6 +5,7 @@ import { Section } from "../components/Primitives.jsx";
 import Icon from "../components/Icon.jsx";
 import VibeBackground from "../components/VibeBackground.jsx";
 import { Cover } from "../components/Primitives.jsx";
+import { waveExplanation } from "../lib/wave.js";
 export default function Home() {
   const app = useApp();
   return (
@@ -53,7 +54,7 @@ export default function Home() {
           {app.waveActive && app.current && (
             <p className="wave-note">
               <Icon name="vibe_xxs" size={16} />
-              Текст этого трека пока недоступен.
+              {waveExplanation(app.waveModelVersion)}
             </p>
           )}
         </div>

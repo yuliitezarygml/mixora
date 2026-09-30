@@ -48,6 +48,34 @@ services:
       retries: 20
     restart: unless-stopped
 
+  gorse:
+    image: zhenghaoz/gorse-in-one:0.5.11
+    profiles: ["recommendations"]
+    environment:
+      GORSE_CACHE_STORE: redis://redis:6379/0
+      GORSE_DATA_STORE: postgres://${POSTGRES_USER:-mixora}:${POSTGRES_PASSWORD:-mixora}@postgres:5432/${POSTGRES_DB:-mixora}?sslmode=disable
+      GORSE_TABLE_PREFIX: gorse_
+      GORSE_SERVER_API_KEY: ${GORSE_API_KEY:-mixora-local-gorse-key}
+      GORSE_DASHBOARD_USER_NAME: ${GORSE_DASHBOARD_USER_NAME:-mixora}
+      GORSE_DASHBOARD_PASSWORD: ${GORSE_DASHBOARD_PASSWORD:-mixora-local}
+    ports:
+      - "127.0.0.1:${GORSE_PORT:-8088}:8088"
+    volumes:
+      - ./infra/gorse/config.toml:/etc/gorse/config.toml:ro
+      - mixora_gorse:/var/lib/gorse
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/8088; printf 'GET /api/health/ready HTTP/1.0\\r\\n\\r\\n' >&3; grep -q '200 OK' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
   api:
     build:
       context: ./beckend
@@ -63,6 +91,9 @@ services:
       MIXORA_SMTP_FROM: ${MIXORA_SMTP_FROM:-Mixora <noreply@mixora.local>}
       MIXORA_SMTP_USERNAME: ${MIXORA_SMTP_USERNAME:-}
       MIXORA_SMTP_PASSWORD: ${MIXORA_SMTP_PASSWORD:-}
+      MIXORA_GORSE_URL: ${MIXORA_GORSE_URL:-}
+      MIXORA_GORSE_API_KEY: ${GORSE_API_KEY:-mixora-local-gorse-key}
+      MIXORA_GORSE_TIMEOUT: ${MIXORA_GORSE_TIMEOUT:-3s}
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
     depends_on:
@@ -82,3 +113,4 @@ services:
 volumes:
   mixora_postgres:
   mixora_redis:
+  mixora_gorse:

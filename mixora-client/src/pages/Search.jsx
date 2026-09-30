@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useApp } from "../state/context.js";
 import { duration, uniqueTracks } from "../lib/library.js";
@@ -21,6 +21,7 @@ export default function Search() {
     source = params.get("source") || "soundcloud";
   const [input, setInput] = useState(q);
   const [shelf, setShelf] = useState("popular");
+  const recordedSearch = useRef("");
   useEffect(() => setInput(q), [q]);
   useEffect(() => {
     if (input.trim() === q) return;
@@ -80,6 +81,16 @@ export default function Search() {
         uniqueTracks([...previous, ...remote.data.tracks]),
       );
   }, [remote.data]);
+  useEffect(() => {
+    if (!q || !remote.data) return;
+    const key = `${app.user?.id || "guest"}:${source}:${q}:${remote.data.tracks
+      .slice(0, 10)
+      .map((track) => `${track.source}:${track.id}`)
+      .join(",")}`;
+    if (recordedSearch.current === key) return;
+    recordedSearch.current = key;
+    app.recordSearch(q, remote.data.tracks);
+  }, [app.user?.id, q, remote.data, source]);
   const local = app.catalog.filter((t) =>
     (t.title + " " + t.artist).toLowerCase().includes(q.toLowerCase()),
   );

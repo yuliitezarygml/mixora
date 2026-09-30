@@ -17,6 +17,7 @@ import (
 	"github.com/iulian/soundcloud-go/internal/config"
 	"github.com/iulian/soundcloud-go/internal/database"
 	"github.com/iulian/soundcloud-go/internal/events"
+	gorseapi "github.com/iulian/soundcloud-go/internal/gorse"
 	"github.com/iulian/soundcloud-go/internal/httpapi"
 	"github.com/iulian/soundcloud-go/internal/library"
 	"github.com/iulian/soundcloud-go/internal/mail"
@@ -97,6 +98,34 @@ func main() {
 			log.Printf("[WARN] Mail worker stopped: %v", err)
 		}
 	}()
+
+	eventStore := events.New(db)
+	recommendationOptions := []recommendation.Option{
+		recommendation.WithCatalog(recommendation.NewCatalog(db)),
+	}
+	if cfg.GorseURL != "" {
+		gorseClient, err := gorseapi.New(gorseapi.Config{
+			BaseURL: cfg.GorseURL, APIKey: cfg.GorseAPIKey, Timeout: cfg.GorseTimeout,
+		})
+		if err != nil {
+			log.Fatalf("[FATAL] Initialize recommendation client: %v", err)
+		}
+		recommendationOptions = append(recommendationOptions, recommendation.WithCollaborative(gorseClient))
+		projectionOptions := events.DefaultProjectionOptions()
+		projectionOptions.OnError = func(err error) { log.Printf("[WARN] Recommendation projection: %v", err) }
+		projectionWorker, err := events.NewProjectionWorker(db, gorseapi.NewProjector(gorseClient), projectionOptions)
+		if err != nil {
+			log.Fatalf("[FATAL] Initialize recommendation projection: %v", err)
+		}
+		go func() {
+			if err := projectionWorker.Run(workerCtx); err != nil && err != context.Canceled {
+				log.Printf("[WARN] Recommendation projection stopped: %v", err)
+			}
+		}()
+		log.Printf("[INFO] Gorse recommendations enabled at %s", cfg.GorseURL)
+	} else {
+		log.Println("[INFO] Gorse recommendations disabled; Wave uses rules-v0 fallback")
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -181,10 +210,11 @@ func main() {
 		Database:        db,
 		Auth:            authService,
 		Libraries:       library.New(db),
-		Events:          events.New(db),
+		Events:          eventStore,
 		MailOutbox:      mailOutbox,
 		Playback:        playback.NewHub(playback.DefaultMaxMessageBytes),
-		Recommendations: recommendation.New(scClient),
+		Recommendations: recommendation.New(scClient, recommendationOptions...),
+		Impressions:     recommendation.NewImpressionStore(db),
 		MusicEngine:     musicRouter,
 		PublicURL:       cfg.PublicURL,
 		CookieSecure:    cfg.CookieSecure,
@@ -219,6 +249,7 @@ func main() {
 		log.Println("  - GET/PUT /api/v1/library")
 		log.Println("  - POST /api/v1/events")
 		log.Println("  - POST /api/v1/wave")
+		log.Println("  - POST /api/v1/wave/{sessionId}/feedback")
 		log.Println("  - GET  /api/v1/playback/ws")
 		log.Println("  -- Existing music engine --")
 		log.Println("  -- SoundCloud --")

@@ -19,6 +19,11 @@ import {
   eventQueueKey,
 } from "../lib/eventQueue.js";
 import { buildWave, defaultWave } from "../lib/wave.js";
+import { waveFeedbackPath, withWaveSession } from "../lib/waveFeedback.js";
+import {
+  searchListeningEvents,
+  trackListeningEvent,
+} from "../lib/listeningEvents.js";
 import initialCatalog from "../data/catalog.json";
 function applyQuality(hls, quality) {
   if (!hls) return;
@@ -110,11 +115,13 @@ export function AppProvider({ children }) {
     [catalog, setCatalog] = useState(initialCatalog);
   const [waveActive, setWaveActive] = useState(false),
     [waveBusy, setWaveBusy] = useState(false),
+    [waveModelVersion, setWaveModelVersion] = useState("rules-v0"),
     [waveContext, setWaveContext] = useState(null),
     [waveSettingsOpen, setWaveSettingsOpen] = useState(false);
   const waveGeneration = useRef(0),
     waveRound = useRef(0),
     waveFetching = useRef(false),
+    waveSession = useRef(""),
     heard = useRef(false),
     saveTimer = useRef(0),
     userRef = useRef(null);
@@ -177,21 +184,30 @@ export function AppProvider({ children }) {
       }
     }
   };
-  const recordEvent = (type, track, extra = {}) => {
+  const enqueueListeningEvents = (input, associateWave = false) => {
     const userId = userRef.current?.id;
-    if (!userId || !track?.id) return;
-    const event = {
-      idempotency_key: crypto.randomUUID(),
-      type,
-      track_source: track.source || "music",
-      track_id: String(track.id),
-      occurred_at: new Date().toISOString(),
-      ...extra,
-    };
+    if (!userId || !input?.length) return;
     const key = eventQueueKey(userId);
-    saveStorage(key, enqueueEvent(readStorage(key, []), event));
+    let queued = readStorage(key, []);
+    for (const raw of input) {
+      const event = associateWave
+        ? withWaveSession(raw, waveSession.current)
+        : raw;
+      queued = enqueueEvent(queued, event);
+      const feedbackPath = associateWave
+        ? waveFeedbackPath(waveSession.current, event.type)
+        : "";
+      if (feedbackPath) void post(feedbackPath, event).catch(() => {});
+    }
+    saveStorage(key, queued);
     void flushEvents(userId);
   };
+  const recordEvent = (type, track, extra = {}) => {
+    const event = trackListeningEvent(type, track, extra);
+    if (event) enqueueListeningEvents([event], true);
+  };
+  const recordSearch = (query, tracks) =>
+    enqueueListeningEvents(searchListeningEvents(query, tracks));
   const setSettings = (patch) =>
     setSettingsState((s) => {
       const next = { ...s, ...patch };
@@ -216,6 +232,8 @@ export function AppProvider({ children }) {
     }
     if (origin !== "wave") {
       waveGeneration.current++;
+      waveSession.current = "";
+      setWaveModelVersion("rules-v0");
       setWaveActive(false);
       setWaveBusy(false);
     }
@@ -264,8 +282,14 @@ export function AppProvider({ children }) {
       );
     } else a.pause();
   };
-  const next = async (auto = false) => {
+  const next = async (auto = false, suppressSkip = false) => {
     if (!queue.length) return;
+    if (!auto && !suppressSkip && current) {
+      recordEvent("skip", current, {
+        position_ms: Math.round((audioRef.current?.currentTime || 0) * 1000),
+        duration_ms: Math.round((audioRef.current?.duration || 0) * 1000),
+      });
+    }
     if (auto && repeat === "one") {
       audioRef.current.currentTime = 0;
       audioRef.current.play().catch(() => {});
@@ -309,9 +333,9 @@ export function AppProvider({ children }) {
   };
   const loadWave = async (preferences, context, exclude = []) => {
     const seeds = uniqueTracks([
-      ...catalog,
       ...library.likes,
       ...library.history,
+      ...catalog,
     ]).slice(0, 40);
     const local = () =>
       buildWave(seeds, library, preferences, {
@@ -331,10 +355,17 @@ export function AppProvider({ children }) {
         seeds,
       });
       const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
+      waveSession.current =
+        tracks.length && typeof data?.session_id === "string"
+          ? data.session_id
+          : "";
+      setWaveModelVersion(data?.model_version || "rules-v0");
       if (tracks.length)
         setCatalog((previous) => uniqueTracks([...previous, ...tracks]));
       return tracks;
     } catch (error) {
+      waveSession.current = "";
+      setWaveModelVersion("rules-v0");
       if (error.status !== 503) toast(error.message);
       return local();
     }
@@ -346,6 +377,8 @@ export function AppProvider({ children }) {
       return;
     }
     const generation = ++waveGeneration.current;
+    waveSession.current = "";
+    setWaveModelVersion("rules-v0");
     setWaveBusy(true);
     setWaveContext(context);
     setSettings({ wave: preferences });
@@ -371,7 +404,7 @@ export function AppProvider({ children }) {
       dislikes: uniqueTracks([track, ...s.dislikes]),
       likes: s.likes.filter((t) => trackKey(t) !== trackKey(track)),
     }));
-    if (current && trackKey(current) === trackKey(track)) next();
+    if (current && trackKey(current) === trackKey(track)) next(false, true);
     toast("Больше не будем предлагать этот трек в Моей волне");
   };
   const toggleSaved = (field, entity) =>
@@ -542,6 +575,8 @@ export function AppProvider({ children }) {
       }
       audioRef.current?.pause();
       waveGeneration.current++;
+      waveSession.current = "";
+      setWaveModelVersion("rules-v0");
       setWaveActive(false);
       setWaveBusy(false);
       setUser(null);
@@ -963,11 +998,13 @@ export function AppProvider({ children }) {
         user,
         waveActive,
         waveBusy,
+        waveModelVersion,
         waveContext,
         wavePreferences,
         waveSettingsOpen,
         setWaveSettingsOpen,
         startWave,
+        recordSearch,
         dislike,
         toggleSaved,
         editPlaylist,

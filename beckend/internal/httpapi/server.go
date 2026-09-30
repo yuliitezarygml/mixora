@@ -29,6 +29,7 @@ type Config struct {
 	MailOutbox      *mail.Outbox
 	Playback        *playback.Hub
 	Recommendations *recommendation.Service
+	Impressions     *recommendation.ImpressionStore
 	MusicEngine     http.Handler
 	PublicURL       string
 	CookieSecure    bool
@@ -66,6 +67,10 @@ type recommendationBackend interface {
 	Recommend(context.Context, recommendation.Request) (recommendation.Result, error)
 }
 
+type impressionBackend interface {
+	Save(context.Context, string, string, recommendation.Request, recommendation.Result) error
+}
+
 type Server struct {
 	db              *pgxpool.Pool
 	auth            authBackend
@@ -74,6 +79,7 @@ type Server struct {
 	mailOutbox      mailBackend
 	playback        *playback.Hub
 	recommendations recommendationBackend
+	impressions     impressionBackend
 	publicURL       string
 	cookieSecure    bool
 	sessionTTL      time.Duration
@@ -100,7 +106,8 @@ func New(config Config) (http.Handler, error) {
 	s := &Server{
 		db: config.Database, auth: config.Auth, libraries: config.Libraries,
 		events: config.Events, mailOutbox: config.MailOutbox, playback: config.Playback, recommendations: config.Recommendations,
-		publicURL: strings.TrimRight(config.PublicURL, "/"), cookieSecure: config.CookieSecure,
+		impressions: config.Impressions,
+		publicURL:   strings.TrimRight(config.PublicURL, "/"), cookieSecure: config.CookieSecure,
 		sessionTTL: config.SessionTTL,
 	}
 
@@ -126,6 +133,7 @@ func (s *Server) handler(musicEngine http.Handler) http.Handler {
 	mux.Handle("PUT /api/v1/library", s.requireAuth(http.HandlerFunc(s.putLibrary)))
 	mux.Handle("POST /api/v1/events", s.requireAuth(http.HandlerFunc(s.addEvents)))
 	mux.Handle("POST /api/v1/wave", s.requireAuth(http.HandlerFunc(s.wave)))
+	mux.Handle("POST /api/v1/wave/{sessionId}/feedback", s.requireAuth(http.HandlerFunc(s.waveFeedback)))
 	mux.Handle("GET /api/v1/playback/ws", s.requireAuth(http.HandlerFunc(s.playbackWebSocket)))
 	mux.Handle("/", musicEngine)
 	return middleware(mux)

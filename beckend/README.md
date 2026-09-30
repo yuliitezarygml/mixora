@@ -46,8 +46,9 @@
 
 ```text
 mixora/
-├── compose.yaml              # API, PostgreSQL, Redis и Mailpit для локального запуска
-├── .env.example              # Пример app-layer конфигурации
+├── compose.yaml              # API, PostgreSQL, Redis, Mailpit и профиль Gorse
+├── .env / .env.example       # Локальная конфигурация / безопасный шаблон
+├── infra/gorse/config.toml   # Конфигурация локального recommender-а
 └── beckend/
     ├── cmd/
     │   ├── server/main.go       # Mixora app-layer + музыкальный REST API
@@ -56,9 +57,9 @@ mixora/
     │   ├── api/                 # Существующие SoundCloud / Spotify / yt-dlp routes
     │   ├── httpapi/             # App-layer routes и middleware Mixora
     │   ├── auth/, database/     # Учётные записи, сессии, PostgreSQL
-    │   ├── library/, events/    # Библиотека и события пользователя
+    │   ├── library/, events/    # Библиотека, события и durable projection
     │   ├── mail/                # SMTP и надёжный почтовый outbox
-    │   └── playback/, recommendation/
+    │   └── playback/, recommendation/, gorse/
     ├── pkg/
     │   ├── soundcloud/          # Go SDK для SoundCloud v2
     │   ├── spotify/             # Go SDK для Spotify & Librespot Connect
@@ -88,6 +89,18 @@ curl http://127.0.0.1:8080/ready
 
 Compose собирает `beckend/Dockerfile` и запускает API вместе с PostgreSQL, Redis и Mailpit. При старте API ждёт healthy-сервисы, применяет встроенные PostgreSQL-миграции и запускает почтовый worker. API доступен на `http://127.0.0.1:8080`, а письма в development видны в Mailpit на `http://127.0.0.1:8025`.
 
+Для запуска локального ML-рекомендателя и API одной командой:
+
+```bash
+make recommendations
+docker compose --profile recommendations ps
+curl http://127.0.0.1:8088/api/health/ready
+```
+
+Команда включает зафиксированный `gorse-in-one 0.5.11`. Реальный локальный
+`.env` уже содержит Docker URL и согласованные ключи; файл исключён из Git.
+Без профиля API не ломается и автоматически использует `rules-v0`.
+
 Для базового запуска **не нужны** SoundCloud или Spotify Client ID. SoundCloud автоматически получает текущий `client_id`, а Spotify умеет работать в Zero-Config режиме. `SOUNDCLOUD_CLIENT_ID`, `SOUNDCLOUD_AUTH_TOKEN`, `SPOTIFY_CLIENT_ID` и `SPOTIFY_CLIENT_SECRET` — только опциональные переопределения для прямого запуска Go-процесса; Compose-сервису их нужно явно передать в `environment`, если переопределение всё-таки нужно.
 
 Полезные команды:
@@ -114,7 +127,23 @@ docker compose down
 | `GET/PUT` | `/api/v1/library` | Серверная библиотека пользователя |
 | `POST` | `/api/v1/events` | События прослушивания |
 | `POST` | `/api/v1/wave` | Подбор треков «Моей волны» |
+| `POST` | `/api/v1/wave/{sessionId}/feedback` | Быстрый feedback текущей волны |
 | `GET` | `/api/v1/playback/ws` | WebSocket-синхронизация плеера |
+
+### Как работает персонализация
+
+1. Готовый music engine остаётся единственным источником музыки, текстов и
+   playable-метаданных.
+2. Клиент отправляет `play`, `listen_30s`, `complete`, `skip`, `like`,
+   `dislike` и добавление в плейлист с идемпотентным ключом.
+3. PostgreSQL хранит исходные события. Фоновый worker повторяемо пересчитывает
+   агрегаты и передаёт их в локальный Gorse через `PUT /api/feedback`; события
+   не теряются, если Gorse временно выключен.
+4. Gorse возвращает только provider-neutral ключи вида `source:id`.
+   Сервер восстанавливает полные треки из локального каталога, применяет
+   explicit/language/dislike-фильтры и ограничение повторов артиста.
+5. Если Gorse недоступен или данных ещё мало, ответ остаётся рабочим через
+   `rules-v0`. Поле `model_version` показывает выбранный путь.
 
 #### 🟠 SoundCloud
 | Метод | Эндпоинт | Описание |

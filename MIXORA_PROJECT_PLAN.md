@@ -358,7 +358,7 @@ empty, error, offline, keyboard и responsive, после чего пишетс�
 - [x] Разделить progressive/HLS по ответу готового engine.
 - [ ] Проверить фактическое воспроизведение в браузере/Electron.
 - [ ] Обработать недоступность engine, сети и конкретного трека.
-- [ ] Записывать impression/play/30s/complete/skip.
+- [x] Записывать impression/play/30s/complete/skip.
 - [ ] Проверить очередь, next/previous/repeat/shuffle.
 
 ### Сценарий C: библиотека и плейлисты
@@ -382,8 +382,8 @@ empty, error, offline, keyboard и responsive, после чего пишетс�
 
 - [x] Есть UI настроек и локальный heuristic fallback.
 - [x] Серверная Wave V0 и базовый event logging.
-- [ ] Gorse candidate generation.
-- [ ] Dislike/skip/like feedback без задержки UI.
+- [x] Gorse candidate generation.
+- [x] Dislike/skip/like feedback без задержки UI.
 - [ ] Бесконечная дозагрузка и восстановление сессии.
 - [ ] Объяснимые короткие причины рекомендации для отладки.
 
@@ -419,8 +419,9 @@ Development Compose:
 - `redis`: cache/rate limits.
 - `mailpit`: SMTP `1025`, web UI `8025`.
 - `api`: Go API `8080`, выполняет migrations перед readiness.
-- `worker`: добавляется при подключении outbox/Gorse.
-- `gorse-master`, `gorse-server`, `gorse-worker`: профиль recommendations.
+- Фоновая durable-проекция feedback работает внутри API и дочитывает backlog.
+- `gorse-in-one 0.5.11`: single-node профиль `recommendations`; split на
+  master/server/worker нужен только при доказанной нагрузке.
 - Клиент обычно запускается Vite локально для HMR; production image добавляется
   после стабилизации API.
 
@@ -488,8 +489,8 @@ Postgres/Redis/Mailpit наружу.
 - [x] Event API и отправка основных событий клиента.
 - [x] Добавить offline-буфер и повторную отправку событий клиента.
 - [x] Wave V0 на правилах и кандидатах готового engine.
-- [ ] Поднять Gorse в отдельном Compose profile.
-- [ ] Экспорт пользователей/items/feedback и hybrid ranking.
+- [x] Поднять Gorse в отдельном Compose profile.
+- [x] Экспорт пользователей/items/feedback и hybrid ranking.
 - [ ] Метрики качества и диагностические причины ranking.
 
 Критерий: два пользователя с разной историей получают разные подборки;
@@ -571,6 +572,15 @@ dislike исключает трек, early skip влияет мягко.
 - 2026-09-29: окно «Настроить Мою волну» визуально сверено с локальным
   референсом: убрана лишняя внутренняя панель, восстановлены сетки 3+2,
   цветные character-иконки, mood-градиенты и адаптивный mobile layout.
+- 2026-09-30: поднят локальный Gorse 0.5.11 в Compose profile
+  `recommendations`; music engine не изменён и остаётся источником треков.
+- 2026-09-30: добавлены provider-neutral каталог треков, журнал impressions и
+  durable-проекция событий PostgreSQL → Gorse с идемпотентным `PUT` агрегатов.
+- 2026-09-30: клиент связывает feedback с `wave session_id`, немедленно
+  отправляет ключевые сигналы и сохраняет их в offline-очереди до подтверждения.
+- 2026-09-30: live smoke подтвердил переход `rules-v0` →
+  `gorse-v1+rules-v0`: 51 item, 60 impressions, feedback `like` и нулевой
+  backlog экспорта. Реальный `.env` настроен, согласован и исключён из Git.
 
 ## 19. Definition of Done всего проекта
 

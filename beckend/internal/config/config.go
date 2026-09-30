@@ -20,6 +20,9 @@ type Config struct {
 	SMTPFrom     string
 	SMTPUsername string
 	SMTPPassword string
+	GorseURL     string
+	GorseAPIKey  string
+	GorseTimeout time.Duration
 }
 
 func Load() (Config, error) {
@@ -30,6 +33,10 @@ func Load() (Config, error) {
 	ttl, err := time.ParseDuration(value("MIXORA_SESSION_TTL", "720h"))
 	if err != nil || ttl < time.Hour {
 		return Config{}, fmt.Errorf("MIXORA_SESSION_TTL must be a duration of at least one hour")
+	}
+	gorseTimeout, err := time.ParseDuration(value("MIXORA_GORSE_TIMEOUT", "3s"))
+	if err != nil || gorseTimeout <= 0 || gorseTimeout > 30*time.Second {
+		return Config{}, fmt.Errorf("MIXORA_GORSE_TIMEOUT must be between 1ns and 30s")
 	}
 
 	cfg := Config{
@@ -44,6 +51,9 @@ func Load() (Config, error) {
 		SMTPFrom:     value("MIXORA_SMTP_FROM", "Mixora <noreply@mixora.local>"),
 		SMTPUsername: strings.TrimSpace(os.Getenv("MIXORA_SMTP_USERNAME")),
 		SMTPPassword: os.Getenv("MIXORA_SMTP_PASSWORD"),
+		GorseURL:     strings.TrimRight(strings.TrimSpace(os.Getenv("MIXORA_GORSE_URL")), "/"),
+		GorseAPIKey:  strings.TrimSpace(os.Getenv("MIXORA_GORSE_API_KEY")),
+		GorseTimeout: gorseTimeout,
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("MIXORA_DATABASE_URL is required")

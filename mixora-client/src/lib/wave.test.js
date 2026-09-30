@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildWave, waveQuery, defaultWave } from "./wave.js";
+import { buildWave, defaultWave, waveExplanation, waveQuery } from "./wave.js";
 const track = (id, patch = {}) => ({
   id,
   source: "soundcloud",
@@ -60,9 +60,14 @@ test("popular wave prefers often played tracks and instrumental keeps wordless o
     playbackCount: 1000,
   });
   assert.deepEqual(
-    buildWave([quiet, loud], {}, { ...defaultWave, diversity: "popular" }, {
-      random: () => 0,
-    }).map((t) => t.id),
+    buildWave(
+      [quiet, loud],
+      {},
+      { ...defaultWave, diversity: "popular" },
+      {
+        random: () => 0,
+      },
+    ).map((t) => t.id),
     ["loud", "quiet"],
   );
   assert.deepEqual(
@@ -92,4 +97,9 @@ test("wave seed follows context and mood instead of a fixed catalogue offset", (
     /instrumental/,
   );
   assert.equal(waveQuery(defaultWave, {}, { artist: "Tycho" }), "Tycho");
+});
+
+test("wave explains whether personalization or rules produced the queue", () => {
+  assert.match(waveExplanation("gorse-v1+rules-v0"), /истории/);
+  assert.match(waveExplanation("rules-v0"), /настроению/);
 });

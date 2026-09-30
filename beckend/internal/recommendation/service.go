@@ -28,6 +28,7 @@ type Context struct {
 }
 
 type Request struct {
+	UserID      string        `json:"-"`
 	Preferences Preferences   `json:"preferences"`
 	Context     Context       `json:"context"`
 	Round       int           `json:"round"`
@@ -46,11 +47,33 @@ type Result struct {
 }
 
 type Service struct {
-	soundcloud *soundcloud.Client
+	soundcloud    *soundcloud.Client
+	collaborative Collaborative
+	catalog       Catalog
 }
 
-func New(sc *soundcloud.Client) *Service {
-	return &Service{soundcloud: sc}
+type Collaborative interface {
+	UpsertUser(context.Context, string) error
+	UpsertItems(context.Context, []music.Track) error
+	Recommend(context.Context, string, int) ([]string, error)
+}
+
+type Option func(*Service)
+
+func WithCollaborative(value Collaborative) Option {
+	return func(service *Service) { service.collaborative = value }
+}
+
+func WithCatalog(value Catalog) Option {
+	return func(service *Service) { service.catalog = value }
+}
+
+func New(sc *soundcloud.Client, options ...Option) *Service {
+	service := &Service{soundcloud: sc}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 func (s *Service) Recommend(ctx context.Context, request Request) (Result, error) {
@@ -62,13 +85,97 @@ func (s *Service) Recommend(ctx context.Context, request Request) (Result, error
 	if err != nil {
 		return Result{}, fmt.Errorf("search recommendation candidates: %w", err)
 	}
-	candidates := make([]music.Track, 0, len(response.Collection)+len(request.Seeds))
+	personalizedIDs := s.personalizedIDs(ctx, request.UserID)
+	personalized := s.catalogTracks(ctx, personalizedIDs)
+	candidates := make([]music.Track, 0, len(personalized)+len(response.Collection)+len(request.Seeds))
+	candidates = append(candidates, personalized...)
 	for _, raw := range response.Collection {
 		candidates = append(candidates, music.FromSoundCloud(raw))
 	}
 	candidates = append(candidates, request.Seeds...)
-	tracks := Rank(candidates, request, 30)
-	return Result{Tracks: tracks, ModelVersion: "rules-v0", Reason: query}, nil
+	if s.catalog != nil {
+		_ = s.catalog.Save(ctx, candidates)
+	}
+	if s.collaborative != nil {
+		_ = s.collaborative.UpsertItems(ctx, candidates)
+	}
+	pool := Rank(candidates, request, 100)
+	tracks, matched := Personalize(pool, personalizedIDs, 30)
+	model := "rules-v0"
+	if matched > 0 {
+		model = "gorse-v1+rules-v0"
+	}
+	return Result{Tracks: tracks, ModelVersion: model, Reason: query}, nil
+}
+
+func (s *Service) personalizedIDs(ctx context.Context, userID string) []string {
+	if s.collaborative == nil || strings.TrimSpace(userID) == "" {
+		return nil
+	}
+	if err := s.collaborative.UpsertUser(ctx, userID); err != nil {
+		return nil
+	}
+	ids, err := s.collaborative.Recommend(ctx, userID, 100)
+	if err != nil {
+		return nil
+	}
+	return ids
+}
+
+func (s *Service) catalogTracks(ctx context.Context, ids []string) []music.Track {
+	if s.catalog == nil || len(ids) == 0 {
+		return nil
+	}
+	tracks, err := s.catalog.Find(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	return tracks
+}
+
+// Personalize promotes items in the collaborative order, keeps the
+// deterministic rules order for everything else and retains artist variety.
+func Personalize(tracks []music.Track, ids []string, limit int) ([]music.Track, int) {
+	if limit <= 0 || len(tracks) == 0 {
+		return nil, 0
+	}
+	byKey := make(map[string]music.Track, len(tracks))
+	for _, track := range tracks {
+		byKey[track.Key()] = track
+	}
+	ordered := make([]music.Track, 0, len(tracks))
+	used := make(map[string]bool, len(tracks))
+	matched := 0
+	for _, id := range ids {
+		track, exists := byKey[id]
+		if !exists || used[id] {
+			continue
+		}
+		used[id] = true
+		ordered = append(ordered, track)
+		matched++
+	}
+	for _, track := range tracks {
+		if !used[track.Key()] {
+			used[track.Key()] = true
+			ordered = append(ordered, track)
+		}
+	}
+	result := make([]music.Track, 0, min(limit, len(ordered)))
+	for len(ordered) > 0 && len(result) < limit {
+		pick := 0
+		if len(result) > 0 {
+			for index := range ordered {
+				if ordered[index].Artist != result[len(result)-1].Artist {
+					pick = index
+					break
+				}
+			}
+		}
+		result = append(result, ordered[pick])
+		ordered = append(ordered[:pick], ordered[pick+1:]...)
+	}
+	return result, matched
 }
 
 func BuildQuery(preferences Preferences, context Context, likes []music.Track, round int) string {

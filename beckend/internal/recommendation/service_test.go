@@ -26,3 +26,19 @@ func TestRankExcludesDislikesAndSpreadsArtists(t *testing.T) {
 		t.Fatalf("unexpected ranking: %#v", got)
 	}
 }
+
+func TestPersonalizePromotesKnownItemsAndKeepsFallback(t *testing.T) {
+	t.Parallel()
+	tracks := []music.Track{
+		{ID: "1", Source: "soundcloud", Artist: "A"},
+		{ID: "2", Source: "soundcloud", Artist: "B"},
+		{ID: "3", Source: "soundcloud", Artist: "C"},
+	}
+	got, matched := Personalize(tracks, []string{"soundcloud:3", "missing:7"}, 3)
+	if matched != 1 {
+		t.Fatalf("matched = %d", matched)
+	}
+	if len(got) != 3 || got[0].ID != "3" || got[1].ID != "1" || got[2].ID != "2" {
+		t.Fatalf("personalized order = %#v", got)
+	}
+}

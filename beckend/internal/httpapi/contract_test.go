@@ -3,7 +3,6 @@ package httpapi
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -175,11 +174,26 @@ func TestAppAPIContract(t *testing.T) {
 		if len(body.Tracks) != 1 || body.Tracks[0].ID != "recommended-1" || body.ModelVersion != "contract-v1" || body.Reason != "fixture ranking" {
 			t.Fatalf("wave response = %#v", body)
 		}
-		if raw, err := hex.DecodeString(body.SessionID); err != nil || len(raw) != 16 {
-			t.Fatalf("wave session id = %q, want 16-byte hex", body.SessionID)
+		if !validUUID(body.SessionID) {
+			t.Fatalf("wave session id = %q, want UUID", body.SessionID)
 		}
-		if fixture.recommendations.request.Round != 2 || fixture.recommendations.request.Preferences.Activity != "work" {
+		if fixture.recommendations.request.UserID != fixture.user.ID || fixture.recommendations.request.Round != 2 || fixture.recommendations.request.Preferences.Activity != "work" {
 			t.Fatalf("wave request = %#v", fixture.recommendations.request)
+		}
+		if fixture.impressions.sessionID != body.SessionID || fixture.impressions.userID != fixture.user.ID {
+			t.Fatalf("saved impressions = %#v", fixture.impressions)
+		}
+	})
+
+	t.Run("wave feedback", func(t *testing.T) {
+		response := requestJSON(t, client, http.MethodPost, server.URL+"/api/v1/wave/123e4567-e89b-12d3-a456-426614174000/feedback", map[string]any{
+			"idempotency_key": "wave-feedback-1", "type": "skip", "track_source": "soundcloud", "track_id": "42",
+		})
+		assertStatus(t, response, http.StatusNoContent)
+		closeResponse(t, response)
+		batch := fixture.events.batches[len(fixture.events.batches)-1]
+		if batch[0].SessionID != "123e4567-e89b-12d3-a456-426614174000" || batch[0].Type != "skip" {
+			t.Fatalf("wave feedback = %#v", batch)
 		}
 	})
 
@@ -275,6 +289,7 @@ type contractFixture struct {
 	outbox          *fakeMailBackend
 	playback        *playback.Hub
 	recommendations *fakeRecommendationBackend
+	impressions     *fakeImpressionBackend
 }
 
 func newContractFixture() *contractFixture {
@@ -299,6 +314,7 @@ func newContractFixture() *contractFixture {
 			Tracks:       []music.Track{{ID: "recommended-1", Source: "fixture", Title: "Contract Track", Artist: "Fixture Artist", Access: "playable"}},
 			ModelVersion: "contract-v1", Reason: "fixture ranking",
 		}},
+		impressions: &fakeImpressionBackend{},
 	}
 	fixture.auth = &fakeAuthBackend{
 		user: user, session: session, sessionToken: fixture.sessionToken,
@@ -311,7 +327,8 @@ func (f *contractFixture) handler() http.Handler {
 	server := &Server{
 		auth: f.auth, libraries: f.library, events: f.events, mailOutbox: f.outbox,
 		playback: f.playback, recommendations: f.recommendations,
-		publicURL: "https://mixora.test", sessionTTL: 24 * time.Hour,
+		impressions: f.impressions,
+		publicURL:   "https://mixora.test", sessionTTL: 24 * time.Hour,
 	}
 	musicEngine := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("X-Contract-Music-Engine", "reached")
@@ -419,6 +436,21 @@ type fakeRecommendationBackend struct {
 func (f *fakeRecommendationBackend) Recommend(_ context.Context, request recommendation.Request) (recommendation.Result, error) {
 	f.request = request
 	return f.result, nil
+}
+
+type fakeImpressionBackend struct {
+	userID    string
+	sessionID string
+	request   recommendation.Request
+	result    recommendation.Result
+}
+
+func (f *fakeImpressionBackend) Save(_ context.Context, userID, sessionID string, request recommendation.Request, result recommendation.Result) error {
+	f.userID = userID
+	f.sessionID = sessionID
+	f.request = request
+	f.result = result
+	return nil
 }
 
 func requestJSON(t *testing.T, client *http.Client, method, url string, body any) *http.Response {

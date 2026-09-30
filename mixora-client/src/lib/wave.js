@@ -29,6 +29,12 @@ export const waveLanguages = [
   ["foreign", "Иностранный"],
   ["instrumental", "Без слов"],
 ];
+
+export function waveExplanation(modelVersion) {
+  return String(modelVersion || "").startsWith("gorse-")
+    ? "Подбираем по вашей истории прослушиваний и реакциям"
+    : "Подбираем по настроению и настройкам волны";
+}
 const moodQueries = {
   calm: "ambient chill",
   energetic: "electronic dance",
@@ -52,10 +58,20 @@ export function normalizeWave(preferences = {}) {
   return {
     ...defaultWave,
     ...preferences,
-    activity: activityQueries[preferences.activity] ? preferences.activity : "any",
-    diversity: diversity || (["favorite", "unknown", "popular", "any"].includes(preferences.diversity) ? preferences.diversity : "any"),
+    activity: activityQueries[preferences.activity]
+      ? preferences.activity
+      : "any",
+    diversity:
+      diversity ||
+      (["favorite", "unknown", "popular", "any"].includes(preferences.diversity)
+        ? preferences.diversity
+        : "any"),
     mood: moodQueries[preferences.mood] ? preferences.mood : "any",
-    language: ["any", "russian", "foreign", "instrumental"].includes(preferences.language) ? preferences.language : "any",
+    language: ["any", "russian", "foreign", "instrumental"].includes(
+      preferences.language,
+    )
+      ? preferences.language
+      : "any",
   };
 }
 export function waveQuery(preferences, library, context, round = 0) {
@@ -65,7 +81,8 @@ export function waveQuery(preferences, library, context, round = 0) {
   if (context?.genre && wave.activity === "any" && wave.mood === "any")
     return context.genre;
   const parts = [];
-  if (activityQueries[wave.activity]) parts.push(activityQueries[wave.activity]);
+  if (activityQueries[wave.activity])
+    parts.push(activityQueries[wave.activity]);
   if (wave.mood !== "any") parts.push(moodQueries[wave.mood]);
   if (wave.language === "instrumental") parts.push("instrumental");
   if (!parts.length) {
@@ -107,7 +124,11 @@ export function buildWave(
       (!explicit && t.explicit)
     )
       return false;
-    if (preferences.diversity === "favorite" && familiar.size && !familiar.has(trackKey(t)))
+    if (
+      preferences.diversity === "favorite" &&
+      familiar.size &&
+      !familiar.has(trackKey(t))
+    )
       return false;
     if (preferences.diversity === "unknown" && familiar.has(trackKey(t)))
       return false;
