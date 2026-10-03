@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  seekListeningEvent,
   searchListeningEvents,
   trackListeningEvent,
 } from "./listeningEvents.js";
@@ -40,6 +41,21 @@ test("legacy SoundCloud URNs are canonicalized before feedback", () => {
     { id: () => "event-legacy", now: () => "2026-09-30T00:00:00.000Z" },
   );
   assert.equal(event.track_id, "1534086151");
+});
+
+test("seek event records only meaningful jumps with playback context", () => {
+  const track = { id: "soundcloud:tracks:42", source: "soundcloud" };
+  assert.equal(seekListeningEvent(track, 10, 14.9, 180, options), null);
+  assert.deepEqual(seekListeningEvent(track, 10, 25, 180, options), {
+    idempotency_key: "event-2",
+    type: "seek",
+    track_source: "soundcloud",
+    track_id: "42",
+    occurred_at: "2026-09-30T00:00:00.000Z",
+    position_ms: 25000,
+    duration_ms: 180000,
+    context: { from_position_ms: 10000 },
+  });
 });
 
 test("search creates one query event and bounded result impressions", () => {

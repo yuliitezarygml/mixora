@@ -70,3 +70,49 @@ func TestModelVersionDescribesActiveLayers(t *testing.T) {
 		t.Fatalf("hybrid model = %q", got)
 	}
 }
+
+func TestMergeStoredPreferencesOverridesStaleClientState(t *testing.T) {
+	t.Parallel()
+	track := func(id string) music.Track {
+		return music.Track{Source: "soundcloud", ID: id, Title: "Track " + id, Artist: "Artist"}
+	}
+	merged := mergeStoredPreferences(Request{
+		Likes:    []music.Track{track("1")},
+		Dislikes: []music.Track{track("2")},
+	}, []music.Track{track("2")}, []music.Track{track("1")}, nil)
+	if len(merged.Likes) != 1 || merged.Likes[0].ID != "2" {
+		t.Fatalf("likes = %#v, want persisted like for track 2", merged.Likes)
+	}
+	if len(merged.Dislikes) != 1 || merged.Dislikes[0].ID != "1" {
+		t.Fatalf("dislikes = %#v, want persisted dislike for track 1", merged.Dislikes)
+	}
+}
+
+func TestMergeStoredPreferencesNeutralRetractsStaleClientState(t *testing.T) {
+	t.Parallel()
+	track := func(id string) music.Track {
+		return music.Track{Source: "soundcloud", ID: id, Title: "Track " + id, Artist: "Artist"}
+	}
+	merged := mergeStoredPreferences(Request{
+		Likes:    []music.Track{track("1")},
+		Dislikes: []music.Track{track("2")},
+	}, nil, nil, []music.Track{track("1"), track("2")})
+	if len(merged.Likes) != 0 || len(merged.Dislikes) != 0 {
+		t.Fatalf("neutral state must retract stale client state, got likes=%#v dislikes=%#v", merged.Likes, merged.Dislikes)
+	}
+}
+
+func TestMergeStoredHistoryKeepsServerRecencyAndOfflineFallback(t *testing.T) {
+	t.Parallel()
+	track := func(id string) music.Track {
+		return music.Track{Source: "soundcloud", ID: id, Title: "Track " + id, Artist: "Artist"}
+	}
+	merged := mergeStoredHistory(
+		[]music.Track{track("server-new"), track("same")},
+		[]music.Track{track("same"), track("local-only")},
+		3,
+	)
+	if len(merged) != 3 || merged[0].ID != "server-new" || merged[1].ID != "same" || merged[2].ID != "local-only" {
+		t.Fatalf("merged history = %#v", merged)
+	}
+}

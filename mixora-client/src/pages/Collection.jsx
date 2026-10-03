@@ -34,6 +34,7 @@ export function CreatePlaylist({ onClose }) {
           e.preventDefault();
           if (!name.trim()) return;
           const p = app.createPlaylist(name);
+          if (!p) return;
           onClose();
           navigate(`/playlist?id=${p.id}`);
         }}
@@ -49,7 +50,7 @@ export function CreatePlaylist({ onClose }) {
             placeholder="Например, для долгой дороги"
           />
         </label>
-        <p className="muted">Плейлист сохранится на этом устройстве.</p>
+        <p className="muted">Плейлист синхронизируется с аккаунтом Mixora.</p>
         <button className="primary" type="submit">
           Создать
         </button>
@@ -115,16 +116,7 @@ export default function Collection() {
             <span>
               {t.title} — {t.artist}
             </span>
-            <button
-              onClick={() =>
-                app.updateLibrary((s) => ({
-                  ...s,
-                  dislikes: s.dislikes.filter((x) => x.id !== t.id),
-                }))
-              }
-            >
-              Вернуть
-            </button>
+            <button onClick={() => app.clearTrackPreference(t)}>Вернуть</button>
           </div>
         ))}
         {!app.library.dislikes.length && (

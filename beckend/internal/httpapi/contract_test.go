@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -141,6 +143,194 @@ func TestAppAPIContract(t *testing.T) {
 		}
 	})
 
+	t.Run("track preferences are server-owned desired state", func(t *testing.T) {
+		input := map[string]any{
+			"idempotency_key": "preference-1",
+			"preference":      "liked",
+			"track": map[string]any{
+				"source": "soundcloud", "id": "soundcloud:tracks:42",
+				"title": "Fixture track", "artist": "Fixture artist",
+			},
+		}
+		response := requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/track-preferences", input)
+		assertStatus(t, response, http.StatusOK)
+		var saved library.TrackPreference
+		decodeResponse(t, response, &saved)
+		if saved.Preference != library.PreferenceLiked || saved.Track.Source != "soundcloud" || saved.Track.ID != "42" || saved.Revision != 1 {
+			t.Fatalf("saved preference = %#v", saved)
+		}
+
+		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/track-preferences", input)
+		assertStatus(t, response, http.StatusOK)
+		var replay library.TrackPreference
+		decodeResponse(t, response, &replay)
+		if replay.Revision != saved.Revision || replay.Preference != saved.Preference {
+			t.Fatalf("replayed preference = %#v, want %#v", replay, saved)
+		}
+
+		response = request(t, client, http.MethodGet, server.URL+"/api/v1/me/track-preferences", nil)
+		assertStatus(t, response, http.StatusOK)
+		var listed struct {
+			Preferences []library.TrackPreference `json:"preferences"`
+		}
+		decodeResponse(t, response, &listed)
+		if len(listed.Preferences) != 1 || listed.Preferences[0].Track.ID != "42" {
+			t.Fatalf("listed preferences = %#v", listed.Preferences)
+		}
+
+		conflict := map[string]any{
+			"idempotency_key": "preference-1", "preference": "disliked",
+			"track": input["track"],
+		}
+		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/track-preferences", conflict)
+		assertStatus(t, response, http.StatusConflict)
+		var body errorResponse
+		decodeResponse(t, response, &body)
+		if body.Error.Code != "idempotency_conflict" {
+			t.Fatalf("error code = %q, want idempotency_conflict", body.Error.Code)
+		}
+	})
+
+	t.Run("history is normalized, ordered, and idempotent", func(t *testing.T) {
+		input := map[string]any{
+			"idempotency_key": "history-1",
+			"occurred_at":     "2026-10-03T12:00:00Z",
+			"track": map[string]any{
+				"source": "soundcloud", "id": "soundcloud:tracks:99",
+				"title": "History track", "artist": "History artist",
+			},
+		}
+		response := requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/history", input)
+		assertStatus(t, response, http.StatusOK)
+		var saved library.HistoryEntry
+		decodeResponse(t, response, &saved)
+		if saved.Track.Source != "soundcloud" || saved.Track.ID != "99" || saved.PlayCount != 1 {
+			t.Fatalf("saved history = %#v", saved)
+		}
+
+		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/history", input)
+		assertStatus(t, response, http.StatusOK)
+		var replay library.HistoryEntry
+		decodeResponse(t, response, &replay)
+		if replay.PlayCount != 1 || !replay.LastListenedAt.Equal(saved.LastListenedAt) {
+			t.Fatalf("history replay = %#v, want %#v", replay, saved)
+		}
+
+		response = request(t, client, http.MethodGet, server.URL+"/api/v1/history?limit=1", nil)
+		assertStatus(t, response, http.StatusOK)
+		var listed struct {
+			History []library.HistoryEntry `json:"history"`
+		}
+		decodeResponse(t, response, &listed)
+		if len(listed.History) != 1 || listed.History[0].Track.ID != "99" {
+			t.Fatalf("history list = %#v", listed.History)
+		}
+
+		conflict := map[string]any{
+			"idempotency_key": "history-1", "occurred_at": "2026-10-03T12:01:00Z",
+			"track": input["track"],
+		}
+		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/history", conflict)
+		assertStatus(t, response, http.StatusConflict)
+		var body errorResponse
+		decodeResponse(t, response, &body)
+		if body.Error.Code != "idempotency_conflict" {
+			t.Fatalf("history conflict code = %q", body.Error.Code)
+		}
+
+		response = request(t, client, http.MethodGet, server.URL+"/api/v1/history?limit=0", nil)
+		assertStatus(t, response, http.StatusBadRequest)
+		closeResponse(t, response)
+
+		response = request(t, client, http.MethodDelete, server.URL+"/api/v1/me/history", nil)
+		assertStatus(t, response, http.StatusNoContent)
+		closeResponse(t, response)
+
+		response = request(t, client, http.MethodGet, server.URL+"/api/v1/history", nil)
+		assertStatus(t, response, http.StatusOK)
+		decodeResponse(t, response, &listed)
+		if len(listed.History) != 0 {
+			t.Fatalf("history after clear = %#v", listed.History)
+		}
+	})
+
+	t.Run("account playlists retain ordered tracks and idempotent writes", func(t *testing.T) {
+		playlistID := "123e4567-e89b-12d3-a456-426614174000"
+		input := map[string]any{
+			"idempotency_key": "playlist-write-1",
+			"name":            "В дороге",
+			"description":     "Музыка для поездки",
+			"pinned":          true,
+			"tracks": []any{
+				map[string]any{"source": "soundcloud", "id": "soundcloud:tracks:42", "title": "First", "artist": "Artist"},
+				map[string]any{"source": "music", "id": "second", "title": "Second", "artist": "Artist"},
+			},
+		}
+		response := requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/playlists/"+playlistID, input)
+		assertStatus(t, response, http.StatusOK)
+		var saved library.Playlist
+		decodeResponse(t, response, &saved)
+		if saved.ID != playlistID || !saved.Pinned || len(saved.Tracks) != 2 || saved.Tracks[0].ID != "42" || saved.Revision != 1 {
+			t.Fatalf("saved playlist = %#v", saved)
+		}
+
+		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/playlists/"+playlistID, input)
+		assertStatus(t, response, http.StatusOK)
+		var replay library.Playlist
+		decodeResponse(t, response, &replay)
+		if replay.Revision != saved.Revision || !replay.UpdatedAt.Equal(saved.UpdatedAt) {
+			t.Fatalf("playlist replay = %#v, want %#v", replay, saved)
+		}
+
+		response = request(t, client, http.MethodGet, server.URL+"/api/v1/me/playlists", nil)
+		assertStatus(t, response, http.StatusOK)
+		var listed struct {
+			Playlists []library.Playlist `json:"playlists"`
+		}
+		decodeResponse(t, response, &listed)
+		if len(listed.Playlists) != 1 || listed.Playlists[0].Tracks[0].ID != "42" {
+			t.Fatalf("playlists = %#v", listed.Playlists)
+		}
+
+		changed := map[string]any{
+			"idempotency_key": "playlist-write-2", "name": input["name"],
+			"description": input["description"], "pinned": true,
+			"tracks": []any{input["tracks"].([]any)[1], input["tracks"].([]any)[0]},
+		}
+		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/playlists/"+playlistID, changed)
+		assertStatus(t, response, http.StatusOK)
+		var reordered library.Playlist
+		decodeResponse(t, response, &reordered)
+		if reordered.Revision != 2 || reordered.Tracks[0].ID != "second" {
+			t.Fatalf("reordered playlist = %#v", reordered)
+		}
+
+		conflicting := map[string]any{
+			"idempotency_key": "playlist-write-1", "name": changed["name"],
+			"description": changed["description"], "pinned": true,
+			"tracks": changed["tracks"],
+		}
+		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/playlists/"+playlistID, conflicting)
+		assertStatus(t, response, http.StatusConflict)
+		var conflict errorResponse
+		decodeResponse(t, response, &conflict)
+		if conflict.Error.Code != "idempotency_conflict" {
+			t.Fatalf("playlist conflict = %#v", conflict)
+		}
+
+		deleteInput := map[string]any{"idempotency_key": "playlist-delete-1"}
+		response = requestJSON(t, client, http.MethodDelete, server.URL+"/api/v1/me/playlists/"+playlistID, deleteInput)
+		assertStatus(t, response, http.StatusOK)
+		var deleted library.PlaylistDeleteResult
+		decodeResponse(t, response, &deleted)
+		if !deleted.Deleted || deleted.ID != playlistID {
+			t.Fatalf("deleted playlist = %#v", deleted)
+		}
+		response = requestJSON(t, client, http.MethodDelete, server.URL+"/api/v1/me/playlists/"+playlistID, deleteInput)
+		assertStatus(t, response, http.StatusOK)
+		closeResponse(t, response)
+	})
+
 	t.Run("events accepts array and envelope", func(t *testing.T) {
 		play := map[string]any{
 			"idempotency_key": "event-1", "type": "play", "track_source": "fixture", "track_id": "track-1",
@@ -155,6 +345,51 @@ func TestAppAPIContract(t *testing.T) {
 		closeResponse(t, response)
 		if fixture.events.userID != fixture.user.ID || len(fixture.events.batches) != 2 || fixture.events.batches[0][0].TrackID != "track-1" || fixture.events.batches[1][0].Type != "search" {
 			t.Fatalf("captured events = %#v", fixture.events)
+		}
+	})
+
+	t.Run("events rejects a track outside the claimed wave session", func(t *testing.T) {
+		previousOwns := fixture.impressions.owns
+		fixture.impressions.owns = false
+		t.Cleanup(func() { fixture.impressions.owns = previousOwns })
+		response := requestJSON(t, client, http.MethodPost, server.URL+"/api/v1/events", []any{map[string]any{
+			"idempotency_key": "event-outside-wave", "type": "seek",
+			"track_source": "soundcloud", "track_id": "42",
+			"session_id": "123e4567-e89b-12d3-a456-426614174000",
+		}})
+		assertStatus(t, response, http.StatusBadRequest)
+		var body errorResponse
+		decodeResponse(t, response, &body)
+		if body.Error.Code != "unknown_wave_track" {
+			t.Fatalf("error code = %q, want unknown_wave_track", body.Error.Code)
+		}
+	})
+
+	t.Run("events rejects client-created impressions in a wave session", func(t *testing.T) {
+		response := requestJSON(t, client, http.MethodPost, server.URL+"/api/v1/events", []any{map[string]any{
+			"idempotency_key": "event-wave-impression", "type": "impression",
+			"track_source": "soundcloud", "track_id": "42",
+			"session_id": "123e4567-e89b-12d3-a456-426614174000",
+		}})
+		assertStatus(t, response, http.StatusBadRequest)
+		var body errorResponse
+		decodeResponse(t, response, &body)
+		if body.Error.Code != "invalid_wave_event" {
+			t.Fatalf("error code = %q, want invalid_wave_event", body.Error.Code)
+		}
+	})
+
+	t.Run("wave fails when impressions cannot be persisted", func(t *testing.T) {
+		fixture.impressions.err = errors.New("database unavailable")
+		t.Cleanup(func() { fixture.impressions.err = nil })
+		response := requestJSON(t, client, http.MethodPost, server.URL+"/api/v1/wave", map[string]any{
+			"preferences": map[string]string{"activity": "work"},
+		})
+		assertStatus(t, response, http.StatusServiceUnavailable)
+		var body errorResponse
+		decodeResponse(t, response, &body)
+		if body.Error.Code != "wave_persistence_failed" {
+			t.Fatalf("error code = %q, want wave_persistence_failed", body.Error.Code)
 		}
 	})
 
@@ -194,6 +429,18 @@ func TestAppAPIContract(t *testing.T) {
 		batch := fixture.events.batches[len(fixture.events.batches)-1]
 		if batch[0].SessionID != "123e4567-e89b-12d3-a456-426614174000" || batch[0].Type != "skip" {
 			t.Fatalf("wave feedback = %#v", batch)
+		}
+	})
+
+	t.Run("wave feedback requires an idempotency key", func(t *testing.T) {
+		response := requestJSON(t, client, http.MethodPost, server.URL+"/api/v1/wave/123e4567-e89b-12d3-a456-426614174000/feedback", map[string]any{
+			"type": "skip", "track_source": "soundcloud", "track_id": "42",
+		})
+		assertStatus(t, response, http.StatusBadRequest)
+		var body errorResponse
+		decodeResponse(t, response, &body)
+		if body.Error.Code != "invalid_feedback" {
+			t.Fatalf("error code = %q, want invalid_feedback", body.Error.Code)
 		}
 	})
 
@@ -314,7 +561,7 @@ func newContractFixture() *contractFixture {
 			Tracks:       []music.Track{{ID: "recommended-1", Source: "fixture", Title: "Contract Track", Artist: "Fixture Artist", Access: "playable"}},
 			ModelVersion: "contract-v1", Reason: "fixture ranking",
 		}},
-		impressions: &fakeImpressionBackend{},
+		impressions: &fakeImpressionBackend{owns: true},
 	}
 	fixture.auth = &fakeAuthBackend{
 		user: user, session: session, sessionToken: fixture.sessionToken,
@@ -384,9 +631,32 @@ func (f *fakeAuthBackend) ResetPassword(context.Context, string, string) (auth.U
 }
 
 type fakeLibraryBackend struct {
-	snapshot library.Snapshot
-	userID   string
-	payload  json.RawMessage
+	snapshot           library.Snapshot
+	userID             string
+	payload            json.RawMessage
+	preferenceUserID   string
+	preferences        map[string]library.TrackPreference
+	preferenceReceipts map[string]fakePreferenceReceipt
+	history            map[string]library.HistoryEntry
+	historyReceipts    map[string]fakeHistoryReceipt
+	playlists          map[string]library.Playlist
+	playlistReceipts   map[string]fakePlaylistReceipt
+}
+
+type fakePreferenceReceipt struct {
+	fingerprint string
+	preference  library.TrackPreference
+}
+
+type fakeHistoryReceipt struct {
+	fingerprint string
+	entry       library.HistoryEntry
+}
+
+type fakePlaylistReceipt struct {
+	fingerprint string
+	playlist    *library.Playlist
+	deleted     *library.PlaylistDeleteResult
 }
 
 func (f *fakeLibraryBackend) Get(context.Context, string) (library.Snapshot, error) {
@@ -398,6 +668,222 @@ func (f *fakeLibraryBackend) Put(_ context.Context, userID string, payload json.
 	f.payload = append(json.RawMessage(nil), payload...)
 	f.snapshot = library.Snapshot{Payload: append(json.RawMessage(nil), payload...), Version: f.snapshot.Version + 1}
 	return f.snapshot, nil
+}
+
+func (f *fakeLibraryBackend) ListTrackPreferences(_ context.Context, userID string) ([]library.TrackPreference, error) {
+	f.preferenceUserID = userID
+	result := make([]library.TrackPreference, 0, len(f.preferences))
+	for _, preference := range f.preferences {
+		result = append(result, preference)
+	}
+	return result, nil
+}
+
+func (f *fakeLibraryBackend) SetTrackPreference(_ context.Context, userID string, input library.PreferenceInput) (library.TrackPreference, error) {
+	normalized, err := library.NormalizePreferenceInput(input)
+	if err != nil {
+		return library.TrackPreference{}, err
+	}
+	if f.preferenceReceipts == nil {
+		f.preferenceReceipts = make(map[string]fakePreferenceReceipt)
+	}
+	fingerprint := string(library.PreferenceRequestFingerprint(normalized))
+	if receipt, found := f.preferenceReceipts[normalized.IdempotencyKey]; found {
+		if receipt.fingerprint != fingerprint {
+			return library.TrackPreference{}, library.ErrIdempotencyKeyConflict
+		}
+		return receipt.preference, nil
+	}
+	if f.preferences == nil {
+		f.preferences = make(map[string]library.TrackPreference)
+	}
+	snapshot := library.TrackSnapshot{
+		ID: normalized.Track.ID, Source: normalized.Track.Source, Title: normalized.Track.Title,
+		Artist: normalized.Track.Artist, ArtistID: normalized.Track.ArtistID, Artwork: normalized.Track.Artwork,
+		Duration: normalized.Track.Duration, Explicit: normalized.Track.Explicit, Access: normalized.Track.Access,
+		Permalink: normalized.Track.Permalink,
+	}
+	key := snapshot.Source + ":" + snapshot.ID
+	current, found := f.preferences[key]
+	revision := int64(1)
+	if found {
+		revision = current.Revision
+		if current.Preference != normalized.Preference || current.Track != snapshot {
+			revision++
+		}
+	}
+	result := library.TrackPreference{
+		Track: snapshot, Preference: normalized.Preference, Revision: revision, UpdatedAt: time.Now().UTC(),
+	}
+	if found && current.Preference == result.Preference && current.Track == result.Track {
+		result.UpdatedAt = current.UpdatedAt
+	}
+	f.preferences[key] = result
+	f.preferenceReceipts[normalized.IdempotencyKey] = fakePreferenceReceipt{fingerprint: fingerprint, preference: result}
+	f.preferenceUserID = userID
+	return result, nil
+}
+
+func (f *fakeLibraryBackend) ListHistory(_ context.Context, _ string, limit int) ([]library.HistoryEntry, error) {
+	entries := make([]library.HistoryEntry, 0, len(f.history))
+	for _, entry := range f.history {
+		entries = append(entries, entry)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].LastListenedAt.Equal(entries[j].LastListenedAt) {
+			return entries[i].Track.Source+":"+entries[i].Track.ID < entries[j].Track.Source+":"+entries[j].Track.ID
+		}
+		return entries[i].LastListenedAt.After(entries[j].LastListenedAt)
+	})
+	if limit < len(entries) {
+		entries = entries[:limit]
+	}
+	return entries, nil
+}
+
+func (f *fakeLibraryBackend) RecordHistory(_ context.Context, _ string, input library.HistoryInput) (library.HistoryEntry, error) {
+	normalized, err := library.NormalizeHistoryInput(input)
+	if err != nil {
+		return library.HistoryEntry{}, err
+	}
+	if f.historyReceipts == nil {
+		f.historyReceipts = make(map[string]fakeHistoryReceipt)
+	}
+	fingerprint := string(library.HistoryRequestFingerprint(normalized))
+	if receipt, found := f.historyReceipts[normalized.IdempotencyKey]; found {
+		if receipt.fingerprint != fingerprint {
+			return library.HistoryEntry{}, library.ErrHistoryIdempotencyKeyConflict
+		}
+		return receipt.entry, nil
+	}
+	if f.history == nil {
+		f.history = make(map[string]library.HistoryEntry)
+	}
+	snapshot := library.TrackSnapshot{
+		ID: normalized.Track.ID, Source: normalized.Track.Source, Title: normalized.Track.Title,
+		Artist: normalized.Track.Artist, ArtistID: normalized.Track.ArtistID, Artwork: normalized.Track.Artwork,
+		Duration: normalized.Track.Duration, Explicit: normalized.Track.Explicit, Access: normalized.Track.Access,
+		Permalink: normalized.Track.Permalink,
+	}
+	key := snapshot.Source + ":" + snapshot.ID
+	entry, found := f.history[key]
+	if !found {
+		entry = library.HistoryEntry{Track: snapshot, FirstListenedAt: normalized.OccurredAt, LastListenedAt: normalized.OccurredAt, PlayCount: 1}
+	} else {
+		entry.PlayCount++
+		if normalized.OccurredAt.Before(entry.FirstListenedAt) {
+			entry.FirstListenedAt = normalized.OccurredAt
+		}
+		if !normalized.OccurredAt.Before(entry.LastListenedAt) {
+			entry.LastListenedAt = normalized.OccurredAt
+			entry.Track = snapshot
+		}
+	}
+	f.history[key] = entry
+	f.historyReceipts[normalized.IdempotencyKey] = fakeHistoryReceipt{fingerprint: fingerprint, entry: entry}
+	return entry, nil
+}
+
+func (f *fakeLibraryBackend) ClearHistory(_ context.Context, _ string) error {
+	f.history = make(map[string]library.HistoryEntry)
+	f.historyReceipts = make(map[string]fakeHistoryReceipt)
+	return nil
+}
+
+func (f *fakeLibraryBackend) ListPlaylists(_ context.Context, _ string) ([]library.Playlist, error) {
+	result := make([]library.Playlist, 0, len(f.playlists))
+	for _, playlist := range f.playlists {
+		result = append(result, copyFakePlaylist(playlist))
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].UpdatedAt.Equal(result[j].UpdatedAt) {
+			return result[i].ID < result[j].ID
+		}
+		return result[i].UpdatedAt.After(result[j].UpdatedAt)
+	})
+	return result, nil
+}
+
+func (f *fakeLibraryBackend) ReplacePlaylist(_ context.Context, _ string, playlistID string, input library.PlaylistInput) (library.Playlist, error) {
+	playlistID, err := library.NormalizePlaylistID(playlistID)
+	if err != nil {
+		return library.Playlist{}, err
+	}
+	normalized, err := library.NormalizePlaylistInput(input)
+	if err != nil {
+		return library.Playlist{}, err
+	}
+	if f.playlistReceipts == nil {
+		f.playlistReceipts = make(map[string]fakePlaylistReceipt)
+	}
+	fingerprint := string(library.PlaylistRequestFingerprint(playlistID, normalized))
+	if receipt, found := f.playlistReceipts[normalized.IdempotencyKey]; found {
+		if receipt.fingerprint != fingerprint || receipt.playlist == nil {
+			return library.Playlist{}, library.ErrPlaylistIdempotencyConflict
+		}
+		return copyFakePlaylist(*receipt.playlist), nil
+	}
+	if f.playlists == nil {
+		f.playlists = make(map[string]library.Playlist)
+	}
+	tracks := make([]library.TrackSnapshot, 0, len(normalized.Tracks))
+	for _, track := range normalized.Tracks {
+		tracks = append(tracks, library.TrackSnapshot{
+			ID: track.ID, Source: track.Source, Title: track.Title, Artist: track.Artist,
+			ArtistID: track.ArtistID, Artwork: track.Artwork, Duration: track.Duration,
+			Explicit: track.Explicit, Access: track.Access, Permalink: track.Permalink,
+		})
+	}
+	now := time.Now().UTC()
+	previous, found := f.playlists[playlistID]
+	result := library.Playlist{
+		ID: playlistID, Name: normalized.Name, Description: normalized.Description,
+		Tracks: tracks, Pinned: normalized.Pinned, Liked: normalized.Liked,
+		Revision: 1, CreatedAt: now, UpdatedAt: now,
+	}
+	if found {
+		result.Revision = previous.Revision
+		result.CreatedAt = previous.CreatedAt
+		if reflect.DeepEqual(previous.Tracks, tracks) && previous.Name == result.Name && previous.Description == result.Description && previous.Pinned == result.Pinned && previous.Liked == result.Liked {
+			result.UpdatedAt = previous.UpdatedAt
+		} else {
+			result.Revision++
+		}
+	}
+	f.playlists[playlistID] = copyFakePlaylist(result)
+	stored := copyFakePlaylist(result)
+	f.playlistReceipts[normalized.IdempotencyKey] = fakePlaylistReceipt{fingerprint: fingerprint, playlist: &stored}
+	return result, nil
+}
+
+func (f *fakeLibraryBackend) DeletePlaylist(_ context.Context, _ string, playlistID string, input library.PlaylistDeleteInput) (library.PlaylistDeleteResult, error) {
+	playlistID, err := library.NormalizePlaylistID(playlistID)
+	if err != nil {
+		return library.PlaylistDeleteResult{}, err
+	}
+	normalized, err := library.NormalizePlaylistDeleteInput(input)
+	if err != nil {
+		return library.PlaylistDeleteResult{}, err
+	}
+	if f.playlistReceipts == nil {
+		f.playlistReceipts = make(map[string]fakePlaylistReceipt)
+	}
+	fingerprint := string(library.PlaylistDeleteRequestFingerprint(playlistID))
+	if receipt, found := f.playlistReceipts[normalized.IdempotencyKey]; found {
+		if receipt.fingerprint != fingerprint || receipt.deleted == nil {
+			return library.PlaylistDeleteResult{}, library.ErrPlaylistIdempotencyConflict
+		}
+		return *receipt.deleted, nil
+	}
+	delete(f.playlists, playlistID)
+	result := library.PlaylistDeleteResult{ID: playlistID, Deleted: true}
+	f.playlistReceipts[normalized.IdempotencyKey] = fakePlaylistReceipt{fingerprint: fingerprint, deleted: &result}
+	return result, nil
+}
+
+func copyFakePlaylist(playlist library.Playlist) library.Playlist {
+	playlist.Tracks = append([]library.TrackSnapshot(nil), playlist.Tracks...)
+	return playlist
 }
 
 type fakeEventBackend struct {
@@ -443,14 +929,23 @@ type fakeImpressionBackend struct {
 	sessionID string
 	request   recommendation.Request
 	result    recommendation.Result
+	owns      bool
+	err       error
 }
 
 func (f *fakeImpressionBackend) Save(_ context.Context, userID, sessionID string, request recommendation.Request, result recommendation.Result) error {
+	if f.err != nil {
+		return f.err
+	}
 	f.userID = userID
 	f.sessionID = sessionID
 	f.request = request
 	f.result = result
 	return nil
+}
+
+func (f *fakeImpressionBackend) Owns(_ context.Context, _, _, _, _ string) (bool, error) {
+	return f.owns, nil
 }
 
 func requestJSON(t *testing.T, client *http.Client, method, url string, body any) *http.Response {

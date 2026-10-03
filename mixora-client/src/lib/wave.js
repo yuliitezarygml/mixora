@@ -31,9 +31,16 @@ export const waveLanguages = [
 ];
 
 export function waveExplanation(modelVersion) {
-  return String(modelVersion || "").startsWith("gorse-")
-    ? "Подбираем по вашей истории прослушиваний и реакциям"
-    : "Подбираем по настроению и настройкам волны";
+  const version = String(modelVersion || "");
+  const collaborative = version.includes("gorse-");
+  const semantic = version.includes("embeddinggemma-");
+  if (collaborative && semantic)
+    return "Учитываем вашу историю, реакции и смысловую похожесть треков";
+  if (collaborative)
+    return "Подбираем по вашей истории прослушиваний и реакциям";
+  if (semantic)
+    return "Подбираем по смысловой похожести музыки и настройкам волны";
+  return "Подбираем по настроению и настройкам волны";
 }
 const moodQueries = {
   calm: "ambient chill",

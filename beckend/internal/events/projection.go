@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/iulian/soundcloud-go/internal/recommendationlock"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -95,7 +96,17 @@ func (w *ProjectionWorker) processAndReport(parent context.Context) error {
 // event history and sent with PUT semantics, so repeating a batch cannot
 // inflate a user's signal.
 func (w *ProjectionWorker) Process(ctx context.Context) error {
-	rows, err := w.db.Query(ctx, `
+	lease, locked, err := recommendationlock.TryAcquire(ctx, w.db)
+	if err != nil {
+		return err
+	}
+	if !locked {
+		return nil
+	}
+	defer lease.Release()
+	connection := lease.Connection()
+
+	rows, err := connection.Query(ctx, `
 		SELECT id::text, user_id::text, event_type, track_source, track_id
 		FROM listening_events
 		WHERE recommendation_projected_at IS NULL
@@ -135,7 +146,7 @@ func (w *ProjectionWorker) Process(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("encode recommendation projection keys: %w", err)
 	}
-	aggregateRows, err := w.db.Query(ctx, `
+	aggregateRows, err := connection.Query(ctx, `
 		WITH keys AS (
 			SELECT user_id::uuid, event_type, track_source, track_id
 			FROM jsonb_to_recordset($1::jsonb) AS value(
@@ -146,6 +157,14 @@ func (w *ProjectionWorker) Process(ctx context.Context) error {
 		       events.track_id, count(*)::float8, max(events.occurred_at)
 		FROM listening_events AS events
 		JOIN keys USING (user_id, event_type, track_source, track_id)
+		LEFT JOIN user_track_preferences AS preferences
+		  ON preferences.user_id = events.user_id
+		 AND preferences.track_source = events.track_source
+		 AND preferences.track_id = events.track_id
+		WHERE NOT (
+			events.event_type IN ('like', 'dislike')
+			AND preferences.user_id IS NOT NULL
+		)
 		GROUP BY events.user_id, events.event_type, events.track_source, events.track_id
 	`, encodedKeys)
 	if err != nil {
@@ -174,7 +193,7 @@ func (w *ProjectionWorker) Process(ctx context.Context) error {
 		return fmt.Errorf("project recommendation feedback: %w", err)
 	}
 	ids := projectionIDs(pending)
-	if _, err := w.db.Exec(ctx, `
+	if _, err := connection.Exec(ctx, `
 		UPDATE listening_events
 		SET recommendation_projected_at=now(), recommendation_projection_error=NULL
 		WHERE id::text = ANY($1::text[])

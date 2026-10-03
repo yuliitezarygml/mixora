@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/iulian/soundcloud-go/internal/events"
+	"github.com/iulian/soundcloud-go/internal/music"
 	"github.com/iulian/soundcloud-go/internal/recommendation"
 )
 
@@ -29,8 +30,13 @@ func (s *Server) wave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID := randomUUID()
-	if s.impressions != nil {
-		_ = s.impressions.Save(r.Context(), owner.User.ID, sessionID, input, result)
+	if sessionID == "" || s.impressions == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "wave_persistence_failed", "Не удалось сохранить сессию волны")
+		return
+	}
+	if err := s.impressions.Save(r.Context(), owner.User.ID, sessionID, input, result); err != nil {
+		writeError(w, r, http.StatusServiceUnavailable, "wave_persistence_failed", "Не удалось сохранить сессию волны")
+		return
 	}
 	response := map[string]any{
 		"tracks": result.Tracks, "session_id": sessionID,
@@ -50,15 +56,37 @@ func (s *Server) waveFeedback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "invalid_feedback", "Некорректная обратная связь")
 		return
 	}
-	input.SessionID = sessionID
-	if input.Key == "" {
-		input.Key = randomID()
+	input.Type = strings.TrimSpace(input.Type)
+	input.Source = strings.ToLower(strings.TrimSpace(input.Source))
+	input.TrackID = music.CanonicalTrackID(input.Source, input.TrackID)
+	if !waveFeedbackTypes[input.Type] {
+		writeError(w, r, http.StatusBadRequest, "invalid_feedback_type", "Это событие нельзя отправить как обратную связь волны")
+		return
 	}
+	if s.impressions == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "wave_persistence_failed", "Сессия волны временно недоступна")
+		return
+	}
+	owned, err := s.impressions.Owns(r.Context(), principalFrom(r).User.ID, sessionID, input.Source, input.TrackID)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "feedback_check_failed", "Не удалось проверить сессию волны")
+		return
+	}
+	if !owned {
+		writeError(w, r, http.StatusBadRequest, "unknown_wave_track", "Трек не относится к этой сессии волны")
+		return
+	}
+	input.SessionID = sessionID
 	if err := s.events.Add(r.Context(), principalFrom(r).User.ID, []events.Event{input}); err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid_feedback", err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+var waveFeedbackTypes = map[string]bool{
+	"play": true, "listen_30s": true, "complete": true, "skip": true,
+	"repeat": true, "like": true, "dislike": true, "add_to_playlist": true,
 }
 
 func randomID() string {

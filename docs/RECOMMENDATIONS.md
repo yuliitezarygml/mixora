@@ -1,133 +1,205 @@
 # Рекомендации Mixora
 
-Этот документ описывает фактически реализованный контур «Моей волны» и
-следующий этап локальных embeddings. Музыкальный движок остаётся источником
-поиска, треков, текстов и аудио; рекомендательная система работает только с
-непрозрачным `track_ref` и metadata snapshot.
+Этот документ описывает фактически работающий контур «Моей волны». Готовый
+music engine остаётся источником поиска, треков, текстов и аудио. Mixora хранит
+каноническую ссылку на трек и небольшой metadata snapshot, необходимый для
+рекомендаций.
 
-## Рабочий поток V1
+## Рабочий поток
 
 ```text
-Search / Player / Library
+Search / Player / Wave
           |
-          | search, impression, play, listen_30s, complete,
-          | repeat, skip, like, dislike, add_to_playlist
+          | impression, play, listen_30s, complete, repeat,
+          | skip, seek, add_to_playlist и Wave feedback
           v
-POST /api/v1/events  +  POST /api/v1/wave/{session_id}/feedback
+PostgreSQL listening_events (append-only journal, idempotency key)
           |
-          v
-PostgreSQL listening_events (источник истины, idempotency key)
+          +--> durable projection ------------------------> Gorse
           |
-          | durable projection с retry
-          v
-Gorse: users + items + агрегированный implicit feedback
-          |
-          | ordered track_ref candidates
-          v
-Mixora ranker: hydrate из track_catalog -> filters -> artist diversity
+          +--> server-side taste -------------------------> pgvector
+
+Like / dislike / «Вернуть»
           |
           v
-POST /api/v1/wave -> tracks + session_id + model_version
+GET/PUT /api/v1/me/track-preferences
           |
           v
-recommendation_impressions для последующей оценки качества
+user_track_preferences + idempotency receipt + durable outbox
+          |                                      |
+          |                                      +----------> Gorse: текущее состояние
+          +--> Wave filters and server-side taste
+
+Wave context --> EmbeddingGemma query --> pgvector cold-start candidates
+          |
+          v
+content taste/query RRF --> Gorse/content blend 2:1 --> rules/filters
+          |
+          v
+POST /api/v1/wave --> tracks + session_id + model_version
+          |
+          v
+recommendation_impressions + impression events
 ```
 
-Gorse не получает URL аудиопотока, cookie, email или пароль. Его user id —
-внутренний UUID, item id — устойчивый `track_ref`. Полный объект трека хранится
-в `track_catalog`, чтобы app-layer мог восстановить результат, не разбирая
-внутренние идентификаторы музыкального движка.
+Gorse и Ollama не получают cookie, email, пароль или URL аудиопотока. User ID
+в Gorse — внутренний UUID, item ID — каноническая пара `source:id`. Полный
+metadata snapshot хранится в `track_catalog`; legacy SoundCloud URN/path-like
+ID нормализуются на границах клиента, API и миграции данных.
 
-### Надёжность
+## Collaborative-контур
 
-- PostgreSQL, а не Gorse, является журналом событий.
-- Клиентская offline-очередь повторяет неподтверждённые события.
-- У каждого события есть idempotency key, поэтому повторная отправка безопасна.
-- Проектор передаёт полный агрегат `user + item + event_type` через идемпотентный
-  `PUT`, а затем отмечает событие обработанным.
-- Если Gorse выключен, Wave возвращает `rules-v0`; воспроизведение не зависит от
-  рекомендателя.
-- Каждая выдача получает UUID `session_id`, а показанные позиции сохраняются
-  отдельно от feedback.
+- PostgreSQL является долговечным журналом событий; Gorse — перестраиваемым
+  индексом рекомендаций.
+- У каждого события обязателен `idempotency_key`, поэтому повторная доставка из
+  offline-очереди не увеличивает сигнал дважды.
+- Для событий внутри Wave дополнительно хранится receipt на
+  `user + session + track + type`: новый случайный key не позволит повторно
+  усилить один и тот же сигнал в одной выдаче.
+- Проектор пересчитывает полный агрегат `user + item + event_type`, отправляет
+  его в Gorse через идемпотентный `PUT` и только потом отмечает события.
+- PostgreSQL advisory lock не позволяет нескольким API-репликам перезаписать
+  агрегат устаревшим значением.
+- Каждая Wave получает UUID `session_id`; feedback разрешён только для трека,
+  реально показанного этому пользователю в этой сессии. Хранилище показов
+  обязательно; если оно не сохранилось транзакционно, Wave отвечает ошибкой,
+  а не выдаёт невалидную сессию.
+- Показ Wave сохраняется одновременно в `recommendation_impressions` и как
+  `impression` в `listening_events`.
 
-### Сигналы V1
+## Текущее состояние «нравится / не нравится»
 
-| Событие | Роль |
-|---|---|
-| `like`, `add_to_playlist` | сильный положительный сигнал |
-| `complete`, `repeat` | положительный сигнал удержания |
-| `listen_30s`, `play` | слабый положительный/read сигнал |
-| `impression` | факт показа, нужен для denominator метрик |
-| `skip` | мягкий отрицательный сигнал |
-| `dislike` | явный отрицательный сигнал и жёсткий фильтр клиента |
-| `search` | сохраняет запрос; impressions результатов связывают запрос с items |
+Like, dislike и возврат в нейтральное состояние больше не интерпретируются как
+неограниченная сумма одинаковых кликов. Для каждой пары `user + source:id`
+сервер хранит одно значение `liked`, `disliked` или `neutral` в
+`user_track_preferences`.
 
-Вес задаётся в одном месте — `internal/gorse/projector.go`. Менять его следует
-только вместе с offline-оценкой, а не под отдельного пользователя.
+- `PUT /api/v1/me/track-preferences` принимает компактный track snapshot,
+  желаемое состояние и `idempotency_key`; повтор того же запроса возвращает
+  исходный результат, а повтор ключа с другим запросом даёт `409`.
+- Одна транзакция обновляет текущее состояние, receipt и coalesced строку
+  `user_track_preference_outbox`. Конкурентные записи для одного трека
+  сериализуются, поэтому поздний выбор не может быть перезаписан устаревшим
+  запросом другого устройства.
+- Worker забирает outbox с lease/retry/backoff. Для `liked` он снимает
+  противоположный dislike и записывает like в Gorse; для `disliked` делает
+  обратное; `neutral` удаляет оба сигнала. Устаревшие pending-версии
+  coalesced, поэтому наружу публикуется последнее состояние.
+- Общий advisory lock разделяют event projector и worker предпочтений. Их
+  публикации в Gorse выполняются последовательно; если сначала успел старый
+  event-агрегат, следующая публикация текущего состояния его исправляет. Если Gorse
+  выключен, запись остаётся в PostgreSQL до следующей попытки.
+- Wave читает серверное состояние до ранжирования; оно имеет приоритет над
+  временными seed клиента. Content taste также заменяет старые `like`/
+  `dislike`-события текущим состоянием, а `neutral` снимает такой сигнал.
+- Клиент сразу обновляет интерфейс, хранит отдельную offline-очередь на
+  аккаунт и оставляет в ней только последний выбор для трека. После входа он
+  сначала читает серверное состояние, затем накладывает ещё не доставленные
+  локальные изменения.
+
+Миграция `006_track_preferences.sql` переносит валидные likes/dislikes из
+старого `user_libraries.payload`; при конфликте legacy dislike имеет приоритет.
+Snapshot библиотеки остаётся переходным хранилищем других библиотечных полей,
+но больше не является источником истины для likes/dislikes.
+
+## Content embeddings V2a
+
+Локальный embedding-контур уже включён и работает через Ollama:
+
+- runtime model: `embeddinggemma:300m-qat-q4_0`;
+- неизменяемая версия индекса: `embeddinggemma-q4-768-doc-v1`;
+- размерность: 768;
+- хранение: PostgreSQL/pgvector, один активный vector на канонический трек;
+- nearest-neighbour lookup: HNSW cosine index.
+
+Документ строится только из доверенного metadata snapshot:
+
+```text
+title: <title> | text: artist: <artist> | album: <album> | genre: <genre> | tags: <tags>
+```
+
+Cold-start запрос использует отдельный retrieval prompt:
+
+```text
+task: search result | query: <Wave query>
+```
+
+Фоновый worker выбирает задачи с `FOR UPDATE SKIP LOCKED`, обрабатывает их
+батчами, проверяет количество, размерность и конечность значений, а при ошибке
+освобождает claim с retry/backoff. Hash metadata предотвращает повторную
+индексацию неизменившегося трека.
+
+## Персонализация и fallback
+
+Сервер строит taste-vector из `listening_events` и текущих предпочтений,
+поэтому профиль работает между устройствами. Like, добавление, repeat,
+complete, длительное прослушивание и play дают положительный вес; skip и
+dislike не становятся положительными seed. Если для трека уже существует
+текущее предпочтение, оно заменяет его старые `like`/`dislike`-события в этом
+расчёте. Клиентские seed используются только для текущего ответа и не могут
+изменять общий каталог.
+
+Content-кандидаты вкуса и query объединяются weighted reciprocal-rank fusion.
+Затем итоговый список смешивает два collaborative-кандидата Gorse и один
+content-кандидат, после чего применяются существующие фильтры и правила
+разнообразия. Это порядок слияния, а не обученный числовой score.
+
+Каждый внешний слой допускает отказ:
+
+- нет Ollama или pgvector-результата — используются Gorse + rules;
+- нет Gorse — используются content + rules;
+- оба персональных слоя недоступны — Wave остаётся на `rules-v0` и music engine;
+- embedding никогда не находится в критическом пути воспроизведения.
+
+Активный путь виден в `model_version`, например
+`gorse-v1+embeddinggemma-q4-768-doc-v1+rules-v0`.
 
 ## Локальный запуск
 
+Полный контур:
+
+```bash
+make embeddings
+docker compose --profile recommendations --profile embeddings ps
+curl http://127.0.0.1:8080/ready
+curl http://127.0.0.1:11434/api/tags
+```
+
+Только collaborative-контур без Ollama:
+
 ```bash
 make recommendations
-docker compose --profile recommendations ps
-curl http://127.0.0.1:8088/api/health/ready
 ```
 
-Корневой `.env` является активной локальной конфигурацией и автоматически
-читается Compose. Он исключён из Git. `.env.example` содержит тот же набор
-переменных, но не заменяет реальный `.env`.
+Корневой `.env` является активной локальной конфигурацией и исключён из Git.
+`.env.example` содержит синхронизированный безопасный шаблон, но не заменяет
+реальный `.env`.
 
-## V2: content embeddings
+## Что ещё не реализовано или не подтверждено сквозным сценарием
 
-Следующий слой нужен для cold start и похожести треков, когда collaborative
-истории ещё мало. Выбран локальный `EmbeddingGemma` через Ollama:
+- нормализованные server-side history и CRUD/ordering плейлистов;
+- разрешение конфликтов нескольких устройств для history и плейлистов;
+- полный сбор repeat/seek на всех путях плеера (сейчас есть repeat-one и
+  осмысленные перемотки от пяти секунд);
+- offline evaluation, A/B-ready assignment и продуктовые dashboards;
+- управляемая exploration и объяснение причины для каждого трека;
+- CLAP/audio embeddings — только после измеримого сравнения с text embeddings.
 
-- модель небольшая и помещается на рабочем Apple M2/24 GB;
-- поддерживает более 100 языков, поэтому подходит для русских и иностранных
-  названий, артистов, альбомов, жанров и тегов;
-- вектор сохраняется в уже включённый PostgreSQL/pgvector;
-- генерация embedding идёт в фоне и не блокирует старт воспроизведения.
+Контур предпочтений покрыт целевыми Go unit/HTTP contract tests и клиентскими
+unit tests: сохранение и replay состояния, конфликт idempotency key, очередь,
+retry outbox и перевод трёх состояний в операции Gorse. Полный ручной сценарий
+в запущенном Docker-стеке — migration → offline click → повторный вход →
+подтверждённая публикация в Gorse — остаётся отдельной проверкой перед тем, как
+считать его production-ready.
 
-Текст для embedding строится только из metadata snapshot:
-
-```text
-title: ...
-artist: ...
-album: ...
-genre: ...
-tags: ...
-```
-
-Пользовательский taste-vector вычисляется из взвешенного среднего embeddings
-прослушанных/понравившихся треков с вычитанием dislikes. Финальный score:
-
-```text
-0.55 collaborative + 0.25 content + 0.10 context + 0.10 exploration
-```
-
-Коэффициенты являются стартовой конфигурацией, а не обещанием качества. Перед
-включением V2 нужны таблица версий embeddings, background worker, ограничение
-batch/timeout, fallback при недоступном Ollama и offline-метрики. Аудио-модель
-вроде CLAP добавляется только после text embeddings и проверки стоимости.
-
-## Метрики перед production
-
-- completion rate и early-skip rate;
-- likes на 100 impressions;
-- доля новых артистов и diversity;
-- недоступные треки;
-- доля ответов `rules-v0`;
-- Wave latency p50/p95;
-- projection backlog и возраст самого старого события.
-
-Персональные данные не отправляются во внешнюю модель. Для удаления аккаунта
-должны каскадно удаляться события и библиотека, а user в Gorse — удаляться
-отдельной фоновой задачей.
+Основные метрики перед production: completion rate, early-skip rate, likes на
+100 impressions, diversity/novelty, недоступные треки, доля fallback-ответов,
+Wave latency p50/p95 и возраст projection/embedding backlog.
 
 ## Первичные источники
 
 - Gorse Docker: <https://gorse.io/docs/deploy/docker>
 - Gorse REST API: <https://gorse.io/docs/api/restful-api>
 - Gorse collaborative filtering: <https://gorse.io/docs/concepts/recommenders/collaborative>
-- Ollama EmbeddingGemma: <https://ollama.com/library/embeddinggemma:latest>
-- Google EmbeddingGemma: <https://ai.google.dev/gemma/docs/embeddinggemma>
+- Ollama EmbeddingGemma tags: <https://ollama.com/library/embeddinggemma/tags>
+- Google EmbeddingGemma model card: <https://ai.google.dev/gemma/docs/embeddinggemma/model_card>

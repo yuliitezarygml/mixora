@@ -51,6 +51,8 @@ type Service struct {
 	collaborative Collaborative
 	catalog       Catalog
 	content       ContentBased
+	preferences   PreferenceSource
+	history       HistorySource
 }
 
 type Collaborative interface {
@@ -62,6 +64,21 @@ type Collaborative interface {
 type ContentBased interface {
 	Recommend(context.Context, string, []string, string, int) ([]string, error)
 	Version() string
+}
+
+// PreferenceSource supplies the server-owned current desired state. It
+// is deliberately a narrow read interface so recommendation stays independent
+// from the snapshot-library implementation and callers can still use local
+// optimistic state while an offline mutation waits to be delivered.
+type PreferenceSource interface {
+	RecommendationTracks(context.Context, string) (likes []music.Track, dislikes []music.Track, neutral []music.Track, err error)
+}
+
+// HistorySource returns bounded, server-owned recent tracks. It is separate
+// from ContentBased because user history is an application fact, not an ML
+// implementation detail.
+type HistorySource interface {
+	RecommendationHistory(context.Context, string, int) ([]music.Track, error)
 }
 
 type Option func(*Service)
@@ -78,6 +95,14 @@ func WithContentBased(value ContentBased) Option {
 	return func(service *Service) { service.content = value }
 }
 
+func WithPreferenceSource(value PreferenceSource) Option {
+	return func(service *Service) { service.preferences = value }
+}
+
+func WithHistorySource(value HistorySource) Option {
+	return func(service *Service) { service.history = value }
+}
+
 func New(sc *soundcloud.Client, options ...Option) *Service {
 	service := &Service{soundcloud: sc}
 	for _, option := range options {
@@ -91,6 +116,8 @@ func (s *Service) Recommend(ctx context.Context, request Request) (Result, error
 		return Result{}, ErrUnavailable
 	}
 	request = canonicalRequest(request)
+	request = s.withStoredPreferences(ctx, request)
+	request = s.withStoredHistory(ctx, request)
 	query := BuildQuery(request.Preferences, request.Context, request.Likes, request.Round)
 	response, err := s.soundcloud.SearchTracks(ctx, query, soundcloud.SearchOptions{Limit: 50})
 	if err != nil {
@@ -136,6 +163,107 @@ func canonicalTracks(tracks []music.Track) []music.Track {
 	result := make([]music.Track, len(tracks))
 	for index, track := range tracks {
 		result[index] = music.CanonicalTrack(track)
+	}
+	return result
+}
+
+func (s *Service) withStoredPreferences(ctx context.Context, request Request) Request {
+	if s.preferences == nil || strings.TrimSpace(request.UserID) == "" {
+		return request
+	}
+	likes, dislikes, neutral, err := s.preferences.RecommendationTracks(ctx, request.UserID)
+	if err != nil {
+		// Recommendations remain available if the preference read is briefly
+		// unavailable. The caller's local optimistic state is still useful.
+		return request
+	}
+	return mergeStoredPreferences(request, canonicalTracks(likes), canonicalTracks(dislikes), canonicalTracks(neutral))
+}
+
+// mergeStoredPreferences gives the persisted desired state the last word for
+// a matching track while preserving unrelated, not-yet-synchronised local
+// choices. This keeps a second device correct without making offline UX wait
+// for a round trip.
+func mergeStoredPreferences(request Request, storedLikes, storedDislikes, storedNeutral []music.Track) Request {
+	type desiredState uint8
+	const (
+		stateNeutral desiredState = iota
+		stateLiked
+		stateDisliked
+	)
+	type choice struct {
+		track music.Track
+		state desiredState
+	}
+	capacity := len(request.Likes) + len(request.Dislikes) + len(storedLikes) + len(storedDislikes) + len(storedNeutral)
+	choices := make(map[string]choice, capacity)
+	order := make([]string, 0, capacity)
+	apply := func(tracks []music.Track, state desiredState) {
+		for _, track := range tracks {
+			if track.Source == "" || track.ID == "" {
+				continue
+			}
+			key := track.Key()
+			if _, exists := choices[key]; !exists {
+				order = append(order, key)
+			}
+			choices[key] = choice{track: track, state: state}
+		}
+	}
+	apply(request.Likes, stateLiked)
+	apply(request.Dislikes, stateDisliked)
+	apply(storedLikes, stateLiked)
+	apply(storedDislikes, stateDisliked)
+	apply(storedNeutral, stateNeutral)
+
+	request.Likes = make([]music.Track, 0, len(choices))
+	request.Dislikes = make([]music.Track, 0, len(choices))
+	for _, key := range order {
+		choice := choices[key]
+		switch choice.state {
+		case stateLiked:
+			request.Likes = append(request.Likes, choice.track)
+		case stateDisliked:
+			request.Dislikes = append(request.Dislikes, choice.track)
+		}
+	}
+	return request
+}
+
+func (s *Service) withStoredHistory(ctx context.Context, request Request) Request {
+	if s.history == nil || strings.TrimSpace(request.UserID) == "" {
+		return request
+	}
+	stored, err := s.history.RecommendationHistory(ctx, request.UserID, 100)
+	if err != nil {
+		// The current client request can still carry a freshly heard track while
+		// the durable history store is temporarily unavailable.
+		return request
+	}
+	request.History = mergeStoredHistory(canonicalTracks(stored), request.History, 100)
+	return request
+}
+
+// mergeStoredHistory preserves durable recency as the primary order, then
+// adds unknown local tracks as an optimistic offline fallback. Provider keys
+// are opaque, so de-duplication is only by their canonical source/id pair.
+func mergeStoredHistory(stored, local []music.Track, limit int) []music.Track {
+	if limit <= 0 {
+		return nil
+	}
+	result := make([]music.Track, 0, min(limit, len(stored)+len(local)))
+	seen := make(map[string]bool, cap(result))
+	for _, group := range [][]music.Track{stored, local} {
+		for _, track := range group {
+			if track.Source == "" || track.ID == "" || seen[track.Key()] {
+				continue
+			}
+			seen[track.Key()] = true
+			result = append(result, track)
+			if len(result) == limit {
+				return result
+			}
+		}
 	}
 	return result
 }

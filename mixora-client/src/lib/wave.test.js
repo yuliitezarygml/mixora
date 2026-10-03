@@ -101,5 +101,13 @@ test("wave seed follows context and mood instead of a fixed catalogue offset", (
 
 test("wave explains whether personalization or rules produced the queue", () => {
   assert.match(waveExplanation("gorse-v1+rules-v0"), /истории/);
+  assert.match(
+    waveExplanation("gorse-v1+embeddinggemma-q4-768-doc-v1+rules-v0"),
+    /смысловую похожесть/,
+  );
+  assert.match(
+    waveExplanation("embeddinggemma-q4-768-doc-v1+rules-v0"),
+    /смысловой похожести/,
+  );
   assert.match(waveExplanation("rules-v0"), /настроению/);
 });

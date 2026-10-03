@@ -1,5 +1,9 @@
 const eventID = () => crypto.randomUUID();
 const timestamp = () => new Date().toISOString();
+const meaningfulSeekSeconds = 5;
+
+const milliseconds = (value) =>
+  Number.isFinite(value) && value >= 0 ? Math.round(value * 1000) : undefined;
 
 const eventTrackId = (track) => {
   const value = String(track?.id ?? "").trim();
@@ -20,6 +24,34 @@ export function trackListeningEvent(type, track, extra = {}, options = {}) {
   };
 }
 
+// Slider input can emit many tiny moves. Keep the durable event log useful by
+// recording only deliberate jumps while preserving the before/after position.
+export function seekListeningEvent(
+  track,
+  fromSeconds,
+  toSeconds,
+  durationSeconds,
+  options = {},
+) {
+  if (
+    !Number.isFinite(fromSeconds) ||
+    !Number.isFinite(toSeconds) ||
+    Math.abs(toSeconds - fromSeconds) < meaningfulSeekSeconds
+  ) {
+    return null;
+  }
+  return trackListeningEvent(
+    "seek",
+    track,
+    {
+      position_ms: milliseconds(toSeconds),
+      duration_ms: milliseconds(durationSeconds),
+      context: { from_position_ms: milliseconds(fromSeconds) },
+    },
+    options,
+  );
+}
+
 export function searchListeningEvents(query, tracks = [], options = {}) {
   const value = String(query || "").trim();
   if (!value) return [];
@@ -31,7 +63,11 @@ export function searchListeningEvents(query, tracks = [], options = {}) {
     .slice(0, 10);
   const context = {
     query: value,
-    result_count: Array.isArray(tracks) ? tracks.length : 0,
+    result_count:
+      options.resultCount ?? (Array.isArray(tracks) ? tracks.length : 0),
+    visible_count: visible.length,
+    kind: options.kind || "tracks",
+    source: options.source || "music",
   };
   return [
     {

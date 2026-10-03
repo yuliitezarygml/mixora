@@ -102,8 +102,11 @@ func main() {
 
 	eventStore := events.New(db)
 	catalogStore := recommendation.NewCatalog(db)
+	libraryStore := library.New(db)
 	recommendationOptions := []recommendation.Option{
 		recommendation.WithCatalog(catalogStore),
+		recommendation.WithPreferenceSource(libraryStore),
+		recommendation.WithHistorySource(libraryStore),
 	}
 	if cfg.GorseURL != "" {
 		gorseClient, err := gorseapi.New(gorseapi.Config{
@@ -122,6 +125,17 @@ func main() {
 		go func() {
 			if err := projectionWorker.Run(workerCtx); err != nil && err != context.Canceled {
 				log.Printf("[WARN] Recommendation projection stopped: %v", err)
+			}
+		}()
+		preferenceOutboxOptions := library.DefaultPreferenceOutboxOptions()
+		preferenceOutboxOptions.OnError = func(err error) { log.Printf("[WARN] Track preference publication: %v", err) }
+		preferenceOutboxWorker, err := library.NewPreferenceOutboxWorker(db, gorseapi.NewPreferencePublisher(gorseClient), preferenceOutboxOptions)
+		if err != nil {
+			log.Fatalf("[FATAL] Initialize track preference publication: %v", err)
+		}
+		go func() {
+			if err := preferenceOutboxWorker.Run(workerCtx); err != nil && err != context.Canceled {
+				log.Printf("[WARN] Track preference publication stopped: %v", err)
 			}
 		}()
 		log.Printf("[INFO] Gorse recommendations enabled at %s", cfg.GorseURL)
@@ -245,7 +259,7 @@ func main() {
 	router, err := httpapi.New(httpapi.Config{
 		Database:        db,
 		Auth:            authService,
-		Libraries:       library.New(db),
+		Libraries:       libraryStore,
 		Events:          eventStore,
 		MailOutbox:      mailOutbox,
 		Playback:        playback.NewHub(playback.DefaultMaxMessageBytes),
@@ -283,6 +297,11 @@ func main() {
 		log.Println("  - GET  /api/v1/auth/session")
 		log.Println("  - GET  /api/v1/me")
 		log.Println("  - GET/PUT /api/v1/library")
+		log.Println("  - GET/PUT /api/v1/me/track-preferences")
+		log.Println("  - GET /api/v1/history")
+		log.Println("  - PUT /api/v1/me/history")
+		log.Println("  - GET /api/v1/me/playlists")
+		log.Println("  - PUT/DELETE /api/v1/me/playlists/{playlistID}")
 		log.Println("  - POST /api/v1/events")
 		log.Println("  - POST /api/v1/wave")
 		log.Println("  - POST /api/v1/wave/{sessionId}/feedback")

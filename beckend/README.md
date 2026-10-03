@@ -46,7 +46,7 @@
 
 ```text
 mixora/
-├── compose.yaml              # API, PostgreSQL, Redis, Mailpit и профиль Gorse
+├── compose.yaml              # API, PostgreSQL/pgvector, Redis, Mailpit, Gorse и Ollama
 ├── .env / .env.example       # Локальная конфигурация / безопасный шаблон
 ├── infra/gorse/config.toml   # Конфигурация локального recommender-а
 └── beckend/
@@ -57,14 +57,16 @@ mixora/
     │   ├── api/                 # Существующие SoundCloud / Spotify / yt-dlp routes
     │   ├── httpapi/             # App-layer routes и middleware Mixora
     │   ├── auth/, database/     # Учётные записи, сессии, PostgreSQL
-    │   ├── library/, events/    # Библиотека, события и durable projection
+    │   ├── library/, events/    # Snapshot-библиотека, current preferences,
+    │   │                        # события и durable projection/outbox
     │   ├── mail/                # SMTP и надёжный почтовый outbox
+    │   ├── embedding/           # Ollama-клиент, worker и content-based рекомендации
     │   └── playback/, recommendation/, gorse/
     ├── pkg/
     │   ├── soundcloud/          # Go SDK для SoundCloud v2
     │   ├── spotify/             # Go SDK для Spotify & Librespot Connect
     │   └── ytdlp/               # Go SDK-обёртка над yt-dlp
-    ├── migrations/              # Встроенные SQL-миграции
+    ├── migrations/              # Встроенные SQL-миграции, включая pgvector/HNSW
     ├── examples/                # Примеры SDK
     ├── Dockerfile
     └── go.mod
@@ -101,6 +103,51 @@ curl http://127.0.0.1:8088/api/health/ready
 `.env` уже содержит Docker URL и согласованные ключи; файл исключён из Git.
 Без профиля API не ломается и автоматически использует `rules-v0`.
 
+Для полного гибридного контура с локальными нейронными эмбеддингами:
+
+```bash
+make embeddings
+docker compose --profile recommendations --profile embeddings ps
+
+curl http://127.0.0.1:8080/ready
+curl http://127.0.0.1:11434/api/tags
+docker compose --profile embeddings exec ollama ollama list
+```
+
+`make embeddings` включает оба профиля — `recommendations` и `embeddings` —
+и запускает PostgreSQL/pgvector, Redis, Mailpit, Gorse, Ollama и API. Одноразовый
+сервис `ollama-pull` загружает зафиксированную модель
+`embeddinggemma:300m-qat-q4_0`; API стартует только после успешного завершения
+этой загрузки. Модель сохраняется в Docker volume `mixora_ollama`, поэтому при
+следующем запуске повторно скачивать её не нужно. Ollama доступен только на
+loopback-адресе `127.0.0.1:11434`.
+
+`make recommendations` намеренно запускает Gorse без Ollama. Обычный
+`docker compose up --build -d` не включает профильные сервисы и оставляет
+`MIXORA_GORSE_URL`/`MIXORA_EMBEDDINGS_URL` пустыми, если они не заданы явно.
+
+### Конфигурация локальных рекомендаций
+
+| Переменная | Значение по умолчанию | Назначение и ограничения |
+|---|---|---|
+| `MIXORA_GORSE_URL` | пусто | Включает collaborative-рекомендации. `make recommendations` и `make embeddings` передают `http://gorse:8088`. |
+| `MIXORA_GORSE_API_KEY` | пусто в Go-конфигурации | Ключ API Gorse; Compose передаёт значение `GORSE_API_KEY`. |
+| `MIXORA_GORSE_TIMEOUT` | `3s` | Таймаут запросов к Gorse, допускается значение больше нуля и не более `30s`. |
+| `MIXORA_EMBEDDINGS_URL` | пусто | Включает content-based слой. В Docker используется `http://ollama:11434`; для Go-процесса на хосте — `http://127.0.0.1:11434`. |
+| `MIXORA_EMBEDDINGS_MODEL` | `embeddinggemma:300m-qat-q4_0` | Имя модели, которое передаётся в Ollama `/api/embed`. |
+| `MIXORA_EMBEDDINGS_VERSION` | `embeddinggemma-q4-768-doc-v1` | Версия формата эмбеддинга в БД и в `model_version` ответа Wave. Смена версии ставит каталог на переиндексацию. |
+| `MIXORA_EMBEDDINGS_DIMENSIONS` | `768` | Сейчас поддерживается строго `768`; другое значение останавливает запуск с ошибкой конфигурации. |
+| `MIXORA_EMBEDDINGS_TIMEOUT` | `2m` | HTTP-таймаут Ollama, должен быть больше нуля и не более `10m`; embedding поискового запроса дополнительно ограничен `4s`. |
+| `MIXORA_EMBEDDINGS_BATCH_SIZE` | `16` | Число треков в одном запросе worker-а, допустимый диапазон `1..128`. |
+| `MIXORA_EMBEDDINGS_REQUIRED` | `false` | Только Compose-флаг зависимости API от `ollama-pull`; `make embeddings` временно устанавливает `true`. |
+| `OLLAMA_IMAGE` | `ollama/ollama:0.34.1` | Версия Docker image Ollama. |
+| `OLLAMA_PORT` | `11434` | Локальный loopback-порт Ollama. |
+
+Локальные значения находятся в корневом `.env`; шаблон и полный перечень
+переменных — в `.env.example`. В production нужно заменить все пароли и ключи,
+включить secure-cookie за HTTPS и не публиковать порты PostgreSQL, Redis, Gorse
+или Ollama во внешнюю сеть.
+
 Для базового запуска **не нужны** SoundCloud или Spotify Client ID. SoundCloud автоматически получает текущий `client_id`, а Spotify умеет работать в Zero-Config режиме. `SOUNDCLOUD_CLIENT_ID`, `SOUNDCLOUD_AUTH_TOKEN`, `SPOTIFY_CLIENT_ID` и `SPOTIFY_CLIENT_SECRET` — только опциональные переопределения для прямого запуска Go-процесса; Compose-сервису их нужно явно передать в `environment`, если переопределение всё-таки нужно.
 
 Полезные команды:
@@ -125,6 +172,7 @@ docker compose down
 | `GET/POST` | `/api/v1/auth/verify-email` | Подтверждение email |
 | `POST` | `/api/v1/auth/password/{request\|reset}` | Сброс пароля через mail outbox |
 | `GET/PUT` | `/api/v1/library` | Серверная библиотека пользователя |
+| `GET/PUT` | `/api/v1/me/track-preferences` | Текущее `liked` / `disliked` / `neutral` состояние трека |
 | `POST` | `/api/v1/events` | События прослушивания |
 | `POST` | `/api/v1/wave` | Подбор треков «Моей волны» |
 | `POST` | `/api/v1/wave/{sessionId}/feedback` | Быстрый feedback текущей волны |
@@ -134,16 +182,102 @@ docker compose down
 
 1. Готовый music engine остаётся единственным источником музыки, текстов и
    playable-метаданных.
-2. Клиент отправляет `play`, `listen_30s`, `complete`, `skip`, `like`,
-   `dislike` и добавление в плейлист с идемпотентным ключом.
-3. PostgreSQL хранит исходные события. Фоновый worker повторяемо пересчитывает
+2. Проверенные результаты поиска музыкального движка попадают в
+   `track_catalog`. Для модели формируется provider-neutral документ из
+   названия, артиста, альбома, жанра и тегов; stream URL, токены и внутренние
+   данные провайдера в Ollama не отправляются.
+3. Embedding-worker раз в 15 секунд атомарно забирает до
+   `MIXORA_EMBEDDINGS_BATCH_SIZE` изменившихся записей, вызывает Ollama
+   `/api/embed` и сохраняет 768-мерные векторы в PostgreSQL `pgvector`.
+   Косинусный поиск использует HNSW-индекс, а SHA-256 содержимого не даёт
+   пересчитывать неизменившиеся метаданные.
+4. Плеер, поиск и Wave отправляют `play`, `listen_30s`, `complete`, `skip`,
+   `repeat`, значимый `seek` и добавление в плейлист с идемпотентным ключом.
+   Wave feedback остаётся защищённым append-only событием в пределах своей
+   выдачи.
+5. Явные like, dislike и «Вернуть» из библиотеки идут через
+   `PUT /api/v1/me/track-preferences`. Одна транзакция сохраняет текущее состояние,
+   idempotency receipt и coalesced durable outbox. Повтор того же ключа
+   возвращает прежний результат; тот же ключ с другим запросом даёт `409`.
+   `neutral` — явное снятие ранее выбранного состояния, а не отсутствие записи.
+6. PostgreSQL хранит исходные события. Фоновый worker повторяемо пересчитывает
    агрегаты и передаёт их в локальный Gorse через `PUT /api/feedback`; события
    не теряются, если Gorse временно выключен.
-4. Gorse возвращает только provider-neutral ключи вида `source:id`.
-   Сервер восстанавливает полные треки из локального каталога, применяет
+7. Отдельный outbox worker публикует последнее текущее состояние в Gorse: снимает
+   противоположный feedback для like/dislike и удаляет оба для neutral. Pending
+   версии coalesced, поэтому после недоступности Gorse доставляется последний
+   выбор, а не устаревшая последовательность кликов.
+8. Content-based слой строит профиль вкуса по положительным событиям за
+   последние 180 дней, ищет ближайшие треки по среднему вектору и отдельно
+   векторизует текущий запрос Wave. Текущее состояние имеет приоритет над старыми
+   одноимёнными like/dislike-событиями. Два списка объединяются reciprocal-rank
+   fusion с весами `0.65` для вкуса и `0.35` для запроса.
+9. Gorse возвращает только provider-neutral ключи вида `source:id`.
+   Collaborative- и content-списки смешиваются в пропорции 2:1. Затем сервер
+   восстанавливает полные треки из локального каталога, применяет
    explicit/language/dislike-фильтры и ограничение повторов артиста.
-5. Если Gorse недоступен или данных ещё мало, ответ остаётся рабочим через
-   `rules-v0`. Поле `model_version` показывает выбранный путь.
+10. В `model_version` ответа `/api/v1/wave` перечислены реально использованные
+   слои, например `gorse-v1+embeddinggemma-q4-768-doc-v1+rules-v0`.
+
+### Текущие предпочтения трека
+
+`GET /api/v1/me/track-preferences` возвращает все текущие состояния, включая
+`neutral`. `PUT` требует cookie-сессию и тело следующей формы:
+
+```json
+{
+  "idempotency_key": "uuid-or-other-unique-key",
+  "preference": "liked",
+  "track": {
+    "source": "soundcloud",
+    "id": "12345",
+    "title": "Название",
+    "artist": "Исполнитель"
+  }
+}
+```
+
+Дополнительные отображаемые поля snapshot (`artwork`, `duration`, `artistId`,
+`explicit`, `access`, `permalink`) допускаются, но URL аудиопотока и provider
+credentials не сохраняются и не передаются в Gorse. Нормализация SoundCloud
+URN/path-like ID происходит на границе API. Переходный `/api/v1/library`
+больше не является источником истины для `likes` и `dislikes`.
+
+### Безопасный fallback и проверки
+
+- Пустой `MIXORA_EMBEDDINGS_URL` полностью отключает neural content layer;
+  Wave продолжает работать через Gorse и/или `rules-v0`.
+- Если Ollama временно недоступен уже после запуска, ошибки worker-а
+  записываются в каталог, claim снимается, а повтор выполняется с
+  экспоненциальной задержкой до 5 минут. Ошибка content-рекомендации не
+  блокирует Gorse и правила.
+- Если Gorse недоступен, исходные события остаются в PostgreSQL и будут
+  повторно спроецированы. Wave использует content-based слой, если он доступен,
+  и всегда сохраняет rules-ранжирование как последний слой.
+- Если Gorse недоступен при изменении like/dislike, текущее состояние уже сохранено
+  локально в PostgreSQL. Durable outbox повторит публикацию с backoff; Wave
+  читает серверное состояние и без ответа Gorse.
+- Ollama-клиент отклоняет ответ с неверным числом векторов, размерностью не
+  `768`, `NaN`/`Inf` или HTTP-ошибкой; размер JSON-ответа ограничен 32 MiB.
+- Несколько embedding-worker-ов не берут одну запись одновременно благодаря
+  `FOR UPDATE SKIP LOCKED` и пятиминутному claim. Gorse projection защищён
+  PostgreSQL advisory lock и использует идемпотентные `PUT`-агрегаты.
+
+Базовые проверки после запуска полного контура:
+
+```bash
+curl --fail http://127.0.0.1:8080/ready
+curl --fail http://127.0.0.1:8088/api/health/ready
+curl --fail http://127.0.0.1:11434/api/tags
+
+docker compose exec postgres sh -lc \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+  "SELECT model_version, dimensions, count(*) FROM track_embeddings GROUP BY 1,2;"'
+```
+
+В логах API включённые слои отмечаются строками `Gorse recommendations enabled`
+и `Local embeddings enabled`. При отключении соответствующего URL сервер явно
+сообщает о fallback.
 
 #### 🟠 SoundCloud
 | Метод | Эндпоинт | Описание |

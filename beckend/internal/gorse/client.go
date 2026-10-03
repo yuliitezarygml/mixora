@@ -120,6 +120,26 @@ func (c *Client) PutFeedback(ctx context.Context, feedback []Feedback) error {
 	return c.do(ctx, http.MethodPut, "/api/feedback", feedback, nil)
 }
 
+// DeleteFeedback removes feedback matching one feedback type, user, and item
+// from Gorse. Each path component is escaped independently so provider-neutral
+// item IDs and application user IDs cannot change the requested route.
+func (c *Client) DeleteFeedback(ctx context.Context, feedbackType, userID, itemID string) error {
+	feedbackType = strings.TrimSpace(feedbackType)
+	userID = strings.TrimSpace(userID)
+	itemID = strings.TrimSpace(itemID)
+	if feedbackType == "" {
+		return errors.New("gorse feedback type is required")
+	}
+	if userID == "" {
+		return errors.New("gorse user ID is required")
+	}
+	if itemID == "" {
+		return errors.New("gorse item ID is required")
+	}
+	path := "/api/feedback/" + url.PathEscape(feedbackType) + "/" + url.PathEscape(userID) + "/" + url.PathEscape(itemID)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
 func (c *Client) Recommend(ctx context.Context, userID string, limit int) ([]string, error) {
 	if strings.TrimSpace(userID) == "" {
 		return nil, errors.New("gorse user ID is required")

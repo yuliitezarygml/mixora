@@ -1,6 +1,6 @@
 # Mixora — генеральный план разработки и миграции
 
-Статус документа: рабочий план, версия 2 от 2026-09-29.
+Статус документа: рабочий план, версия 4 от 2026-10-03.
 
 Этот файл — главная точка входа в проект. Он описывает фактическое состояние
 локальных исходников, целевую архитектуру, порядок миграции интерфейса, контракт
@@ -64,6 +64,9 @@ Mixora — настольный и веб-клиент музыкального 
   тестами и подключается к клиенту через один клиентский API-модуль.
 - Новый объём backend-работ — прикладной слой Mixora: пользователи, сессии,
   почта, библиотека, история, события, рекомендации, миграции и фоновые задачи.
+- Прикладной слой уже нормализует устаревшие SoundCloud URN/path-like ссылки на
+  границе, ведёт provider-neutral каталог для рекомендаций и строит локальные
+  text embeddings. Это не меняет контракт готового музыкального engine.
 - Если фактические payload готового engine отличаются от текущих ожиданий UI,
   преобразование выполняется в тонкой границе интеграции без изменения самого
   engine. Конкретные расхождения сначала подтверждаются тестом, а не
@@ -178,23 +181,39 @@ beckend/
   engine. Клиент не разбирает и не собирает его по правилам SoundCloud/Spotify.
 - Для истории и устойчивого UI разрешён небольшой metadata snapshot: название,
   исполнитель, обложка и длительность на момент события.
-- `track_embeddings(track_ref, embedding vector(...), model_version)`
-  добавляется позже как индекс рекомендаций, а не как новый источник каталога.
+- `track_catalog`: provider-neutral metadata snapshot, подготовленный текст,
+  hash содержимого и состояние durable-задачи построения embedding.
+- `track_embeddings`: один активный `vector(768)` на каноническую пару
+  source/id с зафиксированным полем версии модели; HNSW cosine-индекс
+  используется только для поиска похожих кандидатов, а не как новый источник
+  каталога.
 
 ### Пользовательские данные
 
-- `user_track_state`: track_ref, like/dislike/hidden с датами.
-- `user_artist_follows`, `user_album_state`.
-- `playlists`, `playlist_tracks`, `playlist_follows`.
-- `search_history`.
+- `user_track_preferences`: реализованное текущее состояние
+  `liked`/`disliked`/`neutral` для канонической пары `source/id`, с revision и
+  компактным metadata snapshot.
+- `user_track_preference_idempotency`: receipt идемпотентной записи; повтор
+  возвращает тот же результат, а повтор ключа с другим запросом отклоняется.
+- `user_track_preference_outbox`: coalesced durable-публикация последнего
+  состояния в recommender. Это не журнал действий и не новый источник музыки.
+- `user_artist_follows`, `user_album_state` — следующие нормализованные
+  состояния, пока не реализованы.
+- `playlists`, `playlist_tracks`, `playlist_follows` — следующие таблицы,
+  пока не реализованы.
+- `search_history` и нормализованная история прослушивания — следующие этапы,
+  пока не реализованы.
 - `listening_events`: impression, play, listen_30s, complete, skip, repeat,
   seek, like, dislike, add_to_playlist.
 - `recommendation_impressions`: что было предложено, модель, позиция и контекст.
 - `recommendation_jobs`: версия расчёта и состояние фоновой обработки.
 
 Для первого совместимого API разрешён `user_libraries.payload JSONB` как
-переходный snapshot. После стабилизации интерфейса данные постепенно переходят
-в нормализованные таблицы; события записываются нормально с самого начала.
+переходный snapshot. Миграция `006_track_preferences.sql` переносит из него
+валидные likes/dislikes в `user_track_preferences`; после этого snapshot больше
+не является источником истины для этих двух полей. Остальные библиотечные данные
+переходят в нормализованные таблицы по мере реализации; события записываются
+нормально с самого начала.
 
 ## 8. API v1 — обязательный контракт
 
@@ -234,11 +253,13 @@ beckend/
 ### Библиотека
 
 - `GET /api/v1/library`
-- `PUT /api/v1/library` — переходная синхронизация snapshot.
-- `PUT/DELETE /api/v1/me/tracks/{trackId}/like`
-- `PUT/DELETE /api/v1/me/tracks/{trackId}/dislike`
-- CRUD `/api/v1/playlists` и изменение порядка треков.
-- `GET /api/v1/history`.
+- `PUT /api/v1/library` — переходная синхронизация snapshot без likes/dislikes.
+- `GET /api/v1/me/track-preferences` — серверное текущее состояние треков.
+- `PUT /api/v1/me/track-preferences` — идемпотентная запись
+  `liked`/`disliked`/`neutral` с треком из уже полученного engine/UI контекста.
+- CRUD `/api/v1/playlists`, порядок треков и `GET /api/v1/history` — ещё не
+  реализованы; прежние hypothetical per-track like/dislike endpoints не входят
+  в текущий контракт.
 
 ### Музыка и воспроизведение
 
@@ -291,13 +312,16 @@ Apple M2/24 GB без CUDA.
 - Отрицательные: явный dislike/«не рекомендовать».
 - Skip — контекстный сигнал, не безусловный dislike: ранний skip весит сильнее,
   поздний может означать нормальное завершение интереса.
+- Явные like/dislike дополнительно имеют server-side desired state. Для трека,
+  у которого оно задано, оно имеет приоритет над устаревшими одноимёнными
+  событиями при фильтрации и построении вкуса.
 
 ### Генерация кандидатов
 
 1. Collaborative filtering по действиям похожих пользователей.
 2. Item-to-item по совместным прослушиваниям.
 3. Похожие жанры, артисты и теги текущего трека.
-4. Content embeddings текста и позднее аудио embeddings (например, CLAP).
+4. Content embeddings текста; позднее — аудио embeddings (например, CLAP).
 5. Популярное с затуханием по времени.
 6. Контролируемая доля exploration для новых треков и артистов.
 
@@ -314,8 +338,11 @@ Apple M2/24 GB без CUDA.
 
 - V0: текущие правила + кандидаты готового music engine, серверно и с event
   logging.
-- V1: Gorse в Docker, implicit feedback, cold-start по метаданным.
-- V2: pgvector + локальные text/audio embeddings, гибридное ранжирование.
+- V1: Gorse в Docker, implicit feedback и durable-проекция событий.
+- V2a (реализовано): pgvector + локальные text embeddings EmbeddingGemma,
+  серверный taste-vector, query cold-start и гибрид Gorse/content/rules.
+- V2b (следующий этап): audio embeddings, измеряемая exploration и offline
+  evaluation; аудио-модель не включается до проверки пользы на реальных данных.
 - V3: собственный learning-to-rank/two-tower только при достаточном объёме
   реальных событий и наличии offline/online метрик.
 
@@ -358,16 +385,19 @@ empty, error, offline, keyboard и responsive, после чего пишетс�
 - [x] Разделить progressive/HLS по ответу готового engine.
 - [ ] Проверить фактическое воспроизведение в браузере/Electron.
 - [ ] Обработать недоступность engine, сети и конкретного трека.
-- [x] Записывать impression/play/30s/complete/skip.
+- [x] Записывать impression/play/30s/complete/skip, repeat-one и значимые seek.
 - [ ] Проверить очередь, next/previous/repeat/shuffle.
 
 ### Сценарий C: библиотека и плейлисты
 
 - [x] Есть локальная библиотека и оптимистичный UI.
 - [x] Переходная серверная синхронизация snapshot библиотеки.
-- [ ] Нормализованная серверная синхронизация likes/dislikes/history.
+- [x] Нормализованное серверное состояние likes/dislikes/neutral: migration
+  из snapshot, идемпотентный API, offline-очередь на аккаунт и durable Gorse
+  outbox.
+- [ ] Нормализованная история и её UI/API.
 - [ ] CRUD плейлистов и порядок треков.
-- [ ] Разрешение конфликтов нескольких устройств.
+- [ ] Разрешение конфликтов нескольких устройств для history и плейлистов.
 - [ ] Пустые состояния и восстановление после offline.
 
 ### Сценарий D: сущности каталога
@@ -383,7 +413,9 @@ empty, error, offline, keyboard и responsive, после чего пишетс�
 - [x] Есть UI настроек и локальный heuristic fallback.
 - [x] Серверная Wave V0 и базовый event logging.
 - [x] Gorse candidate generation.
-- [x] Dislike/skip/like feedback без задержки UI.
+- [x] Локальные text embeddings, server-side taste и cold-start по запросу.
+- [x] Optimistic like/dislike/«Вернуть» с текущим серверным состоянием;
+  skip и feedback Wave остаются событиями.
 - [ ] Бесконечная дозагрузка и восстановление сессии.
 - [x] Короткое объяснение активного пути: персонализация или rules fallback.
 - [ ] Объяснение причины для каждого отдельного трека.
@@ -423,13 +455,21 @@ Development Compose:
 - Фоновая durable-проекция feedback работает внутри API и дочитывает backlog.
 - `gorse-in-one 0.5.11`: single-node профиль `recommendations`; split на
   master/server/worker нужен только при доказанной нагрузке.
+- `ollama`: локальный CPU runtime в профиле `embeddings`; одноразовый
+  `ollama-pull` загружает закреплённую q4-модель EmbeddingGemma, а API включает
+  фоновую индексацию только при заданном `MIXORA_EMBEDDINGS_URL`.
 - Клиент обычно запускается Vite локально для HMR; production image добавляется
   после стабилизации API.
 
-Нужны `.env.example`, healthchecks, named volumes и отсутствие секретов по
-умолчанию. Provider credentials не являются частью app-layer `.env`: music
-engine сам инкапсулирует свою готовую выдачу. Production не публикует
-Postgres/Redis/Mailpit наружу.
+Текущие команды разделяют лёгкий и полный режим: `make recommendations`
+поднимает Gorse без нейросети, `make embeddings` дополнительно запускает Ollama,
+загружает модель и включает content-рекомендации. При недоступности embeddings
+Wave продолжает работать через Gorse/rules fallback.
+
+В Compose уже есть `.env.example`, healthchecks и named volumes; секреты по
+умолчанию не хранятся в репозитории. Provider credentials не являются частью
+app-layer `.env`: music engine сам инкапсулирует свою готовую выдачу. Production
+не должен публиковать Postgres/Redis/Mailpit наружу.
 
 Для текущего рабочего каталога создан реальный корневой `.env`: в нём явно
 заданы порты и подключения PostgreSQL, Redis, Mailpit, API и Gorse. Compose
@@ -471,6 +511,8 @@ Postgres/Redis/Mailpit наружу.
 - [x] Register/login/logout/session на Argon2id + cookie.
 - [x] Verification mail и password reset через outbox.
 - [x] `/me`, server library snapshot и нормализованные events.
+- [x] Текущее состояние likes/dislikes/neutral с migration legacy snapshot,
+  идемпотентностью и offline-синхронизацией клиента.
 - [x] Подключить существующий AuthModal к реальному API.
 - [x] Убрать session token из localStorage.
 
@@ -493,11 +535,14 @@ Postgres/Redis/Mailpit наружу.
 
 ### P3 — события и Wave V0/V1
 
-- [x] Event API и отправка основных событий клиента.
+- [x] Event API и отправка основных событий клиента; Wave session ownership,
+  обязательный idempotency key и защита от повторного feedback в одной выдаче.
 - [x] Добавить offline-буфер и повторную отправку событий клиента.
 - [x] Wave V0 на правилах и кандидатах готового engine.
 - [x] Поднять Gorse в отдельном Compose profile.
 - [x] Экспорт пользователей/items/feedback и hybrid ranking.
+- [x] Durable Gorse outbox для текущего like/dislike/neutral: последнее
+  состояние coalesced, `neutral` снимает оба feedback-сигнала.
 - [x] Отправка поисковых запросов и impressions результатов поиска.
 - [x] Диагностическое объяснение выбранного model path в UI.
 - [ ] Метрики качества и причины ranking для каждого трека.
@@ -518,9 +563,19 @@ dislike исключает трек, early skip влияет мягко.
 
 ### P5 — рекомендации V2 и качество каталога
 
-- [ ] Проверка устойчивости `track_ref` и metadata snapshots music engine.
-- [ ] pgvector, text embeddings, затем CLAP audio embeddings.
-- [ ] Cold-start onboarding и управляемая exploration.
+- [x] Канонизировать legacy SoundCloud URN/path-like refs на границах API,
+  событий, Wave и существующих записей БД.
+- [x] Добавить provider-neutral metadata snapshots, hash содержимого и durable
+  очередь пересчёта без повторной индексации неизменившихся треков.
+- [x] Добавить pgvector, 768-мерные text embeddings и HNSW cosine lookup.
+- [x] Поднять локальную EmbeddingGemma q4 через Ollama/Compose и подключить
+  безопасный Gorse/content/rules fallback.
+- [x] Строить server-side taste из истории пользователя и query cold-start для
+  пользователя без достаточной истории.
+- [x] Давать сохранённому desired state приоритет над устаревшими
+  `like`/`dislike`-событиями в Wave и content taste.
+- [ ] Добавить и оценить CLAP/audio embeddings.
+- [ ] Cold-start onboarding в UI и управляемая exploration.
 - [ ] Offline evaluation и A/B-ready assignment.
 
 ### P6 — desktop/production
@@ -544,16 +599,25 @@ dislike исключает трек, early skip влияет мягко.
 
 ## 17. Ближайший рабочий порядок
 
-1. P0: Compose, конфигурация, migrations, health/readiness.
-2. P1: auth/session/mail/library.
-3. P2: contract tests и интеграция уже готового music engine с клиентом.
-4. Подключить события клиента до дальнейшей миграции UI.
-5. Реализовать Wave V0, затем Gorse.
-6. Мигрировать оставшиеся страницы вертикальными сценариями.
-7. Стабилизировать Electron и production deployment.
+Базовые P0–P3, text-часть P5 и текущее состояние likes/dislikes уже реализованы.
+Следующая последовательность:
 
-Такой порядок важен: красивый экран без работающего контракта придётся
-переписывать, а раннее логирование событий даст реальные данные для волны.
+1. Прогнать отдельный ручной Docker smoke контура текущего состояния: migration,
+   offline-клик, повторный вход и проверка последнего Gorse feedback. Затем
+   реализовать нормализованные history и CRUD/ordering плейлистов, не ломая
+   переходный library snapshot.
+2. Разделить `AppContext`, закончить сценарии каталога и состояния
+   loading/error/offline; проверить Search → play → next → like → reopen в
+   браузере и Electron.
+3. Добавить метрики recommendation quality/latency, offline evaluation и
+   объяснение причины для отдельного трека.
+4. Реализовать управляемую exploration и cold-start onboarding в UI.
+5. Исследовать CLAP/audio embeddings только после сравнения с уже работающими
+   text embeddings на накопленных событиях.
+6. Закрыть desktop deep links/IPC и production TLS/SMTP/secrets/backups.
+
+Плейлисты, метрики, полноценные error/offline-сценарии и production-подготовка
+остаются незавершёнными и не считаются закрытыми наличием работающей Wave.
 
 ## 18. Журнал решений
 
@@ -593,6 +657,28 @@ dislike исключает трек, early skip влияет мягко.
 - 2026-09-30: поиск пишет отдельное событие запроса и ограниченный набор
   impressions видимых результатов; волна показывает пользователю, сработала
   персональная модель или безопасный rules fallback.
+- 2026-09-30: добавлены миграции pgvector и канонических track refs, локальный
+  Ollama с `embeddinggemma:300m-qat-q4_0`, durable batch-индексация metadata и
+  HNSW cosine-поиск. Server-side taste строится по событиям, а cold-start — по
+  embedding запроса; клиентские seed не могут отравить общий каталог.
+- 2026-09-30: полный live smoke профиля `embeddings` подтвердил healthy
+  API/Gorse/PostgreSQL/Redis/Mailpit/Ollama, 51 из 51 построенных embeddings,
+  отсутствие ошибок и backlog, а Wave вернула путь
+  `gorse-v1+embeddinggemma-q4-768-doc-v1+rules-v0`. Реальный `.env` настроен и
+  остаётся исключённым из Git; CLAP/audio embeddings и продуктовые метрики ещё
+  не реализованы.
+- 2026-09-30: Wave impressions сохраняются атомарно до ответа клиенту; feedback
+  требует настоящий показанный трек, UUID-сессию и idempotency key. Добавлен
+  server-side receipt, который не даёт повторно усилить один Wave-сигнал новым
+  ключом; клиент пишет repeat-one и значимые seek.
+- 2026-10-03: likes/dislikes переведены в отдельное текущее desired state
+  `liked`/`disliked`/`neutral`: migration переносит валидный legacy snapshot,
+  HTTP API и клиент используют идемпотентные записи, а offline-очередь на
+  аккаунт оставляет последний выбор. Coalesced PostgreSQL outbox публикует его
+  в Gorse с retry/backoff; neutral удаляет оба feedback-сигнала. Wave и
+  content taste читают это состояние раньше устаревших одноимённых событий.
+  Целевые Go unit/HTTP contract и клиентские unit tests прошли; ручная Docker
+  проверка полного lifecycle ещё нужна перед production-статусом.
 
 ## 19. Definition of Done всего проекта
 

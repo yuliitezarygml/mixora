@@ -6,6 +6,7 @@ import {
   shuffleTracks,
   libraryPayload,
   libraryCount,
+  saveStorage,
 } from "./library.js";
 test("duration remains valid before metadata loads", () => {
   assert.equal(duration(NaN), "0:00");
@@ -39,4 +40,22 @@ test("shuffle keeps current track and every remaining track", () => {
     tracks.map((t) => t.id),
     [1, 2, 3],
   );
+});
+test("storage writes report whether a durable queue could be saved", () => {
+  const original = globalThis.localStorage;
+  try {
+    globalThis.localStorage = {
+      setItem() {},
+    };
+    assert.equal(saveStorage("mixora-test", { queued: true }), true);
+    globalThis.localStorage = {
+      setItem() {
+        throw Error("storage is full");
+      },
+    };
+    assert.equal(saveStorage("mixora-test", { queued: true }), false);
+  } finally {
+    if (original === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = original;
+  }
 });

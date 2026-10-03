@@ -63,7 +63,9 @@ export function libraryCount(library) {
 export function saveStorage(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch {
     /* Storage may be disabled or full; playback remains available. */
+    return false;
   }
 }

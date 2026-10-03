@@ -92,8 +92,8 @@ export function TrackMenu({ track, onClose, playlistId }) {
             onSubmit={(e) => {
               e.preventDefault();
               if (!name.trim()) return;
-              const p = app.createPlaylist(name);
-              app.addToPlaylist(p.id, track);
+              const p = app.createPlaylist(name, [track]);
+              if (!p) return;
               onClose();
             }}
           >

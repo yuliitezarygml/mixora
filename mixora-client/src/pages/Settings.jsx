@@ -75,7 +75,7 @@ export default function Settings() {
         <div className="setting-row">
           <div>
             <strong>История прослушивания</strong>
-            <p>Сохраняется в этом браузере для текущего аккаунта</p>
+            <p>Синхронизируется с вашим аккаунтом Mixora</p>
           </div>
           <button className="secondary" onClick={() => setClear(true)}>
             Очистить
@@ -90,21 +90,21 @@ export default function Settings() {
         <p className="muted">Mixora · 0.1.0</p>
         <p>Музыка и ваши плейлисты в одном месте.</p>
         <p className="muted">
-          Сохранённая коллекция доступна на этом устройстве. Воспроизведение —
-          Mixora и SoundCloud.
+          Сохранённая коллекция синхронизируется с вашим аккаунтом Mixora.
+          Воспроизведение — Mixora и SoundCloud.
         </p>
       </section>
       {clear && (
         <Modal title="Очистить историю?" onClose={() => setClear(false)}>
           <p>
-            История прослушивания текущего аккаунта будет удалена с этого
-            устройства.
+            История прослушивания будет удалена из вашего аккаунта Mixora.
           </p>
           <button
             className="danger"
             onClick={() => {
-              a.updateLibrary((s) => ({ ...s, history: [] }));
-              setClear(false);
+              void a.clearHistory().then((cleared) => {
+                if (cleared) setClear(false);
+              });
             }}
           >
             Очистить

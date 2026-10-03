@@ -83,14 +83,23 @@ export default function Search() {
   }, [remote.data]);
   useEffect(() => {
     if (!q || !remote.data) return;
-    const key = `${app.user?.id || "guest"}:${source}:${q}:${remote.data.tracks
-      .slice(0, 10)
+    const visibleTracks =
+      kind === "all"
+        ? remote.data.tracks.slice(0, 6)
+        : kind === "tracks"
+          ? remote.data.tracks.slice(0, 40)
+          : [];
+    const key = `${app.user?.id || "guest"}:${source}:${kind}:${q}:${visibleTracks
       .map((track) => `${track.source}:${track.id}`)
       .join(",")}`;
     if (recordedSearch.current === key) return;
     recordedSearch.current = key;
-    app.recordSearch(q, remote.data.tracks);
-  }, [app.user?.id, q, remote.data, source]);
+    app.recordSearch(q, visibleTracks, {
+      kind,
+      source,
+      resultCount: remote.data.tracks.length,
+    });
+  }, [app.user?.id, kind, q, remote.data, source]);
   const local = app.catalog.filter((t) =>
     (t.title + " " + t.artist).toLowerCase().includes(q.toLowerCase()),
   );

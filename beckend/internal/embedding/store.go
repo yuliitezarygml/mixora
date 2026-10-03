@@ -297,28 +297,51 @@ func (s *Store) TasteSeeds(ctx context.Context, userID string, limit int) ([]str
 		return nil, nil
 	}
 	rows, err := s.db.Query(ctx, `
+		WITH event_scores AS (
+			SELECT events.track_source, events.track_id,
+			       sum(CASE events.event_type
+					WHEN 'like' THEN 8
+					WHEN 'add_to_playlist' THEN 7
+					WHEN 'repeat' THEN 5
+					WHEN 'complete' THEN 4
+					WHEN 'listen_30s' THEN 2
+					WHEN 'play' THEN 1
+					WHEN 'skip' THEN -2
+					WHEN 'dislike' THEN -100
+					ELSE 0 END) AS score,
+			       max(events.occurred_at) AS latest_at
+			FROM listening_events AS events
+			LEFT JOIN user_track_preferences AS preferences
+			  ON preferences.user_id = events.user_id
+			 AND preferences.track_source = events.track_source
+			 AND preferences.track_id = events.track_id
+			WHERE events.user_id=$1::uuid
+			  AND events.track_source <> '' AND events.track_id <> ''
+			  AND events.occurred_at >= now() - interval '180 days'
+			  AND NOT (
+				events.event_type IN ('like', 'dislike')
+				AND preferences.user_id IS NOT NULL
+			  )
+			GROUP BY events.track_source, events.track_id
+		), preference_scores AS (
+			SELECT track_source, track_id,
+			       CASE preference
+					WHEN 'liked' THEN 8
+					WHEN 'disliked' THEN -100
+					ELSE 0 END AS score,
+			       updated_at AS latest_at
+			FROM user_track_preferences
+			WHERE user_id=$1::uuid
+		), scores AS (
+			SELECT * FROM event_scores
+			UNION ALL
+			SELECT * FROM preference_scores
+		)
 		SELECT track_source || ':' || track_id AS track_key
-		FROM listening_events
-		WHERE user_id=$1::uuid
-		  AND track_source <> '' AND track_id <> ''
-		  AND occurred_at >= now() - interval '180 days'
+		FROM scores
 		GROUP BY track_source, track_id
-		HAVING sum(CASE event_type
-			WHEN 'like' THEN 8
-			WHEN 'add_to_playlist' THEN 7
-			WHEN 'repeat' THEN 5
-			WHEN 'complete' THEN 4
-			WHEN 'listen_30s' THEN 2
-			WHEN 'play' THEN 1
-			WHEN 'skip' THEN -2
-			WHEN 'dislike' THEN -100
-			ELSE 0 END) > 0
-		ORDER BY sum(CASE event_type
-			WHEN 'like' THEN 8 WHEN 'add_to_playlist' THEN 7
-			WHEN 'repeat' THEN 5 WHEN 'complete' THEN 4
-			WHEN 'listen_30s' THEN 2 WHEN 'play' THEN 1
-			WHEN 'skip' THEN -2 WHEN 'dislike' THEN -100 ELSE 0 END) DESC,
-			max(occurred_at) DESC
+		HAVING sum(score) > 0
+		ORDER BY sum(score) DESC, max(latest_at) DESC, track_source, track_id
 		LIMIT $2
 	`, userID, limit)
 	if err != nil {

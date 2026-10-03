@@ -53,6 +53,14 @@ type authBackend interface {
 type libraryBackend interface {
 	Get(context.Context, string) (library.Snapshot, error)
 	Put(context.Context, string, json.RawMessage) (library.Snapshot, error)
+	ListTrackPreferences(context.Context, string) ([]library.TrackPreference, error)
+	SetTrackPreference(context.Context, string, library.PreferenceInput) (library.TrackPreference, error)
+	ListHistory(context.Context, string, int) ([]library.HistoryEntry, error)
+	RecordHistory(context.Context, string, library.HistoryInput) (library.HistoryEntry, error)
+	ClearHistory(context.Context, string) error
+	ListPlaylists(context.Context, string) ([]library.Playlist, error)
+	ReplacePlaylist(context.Context, string, string, library.PlaylistInput) (library.Playlist, error)
+	DeletePlaylist(context.Context, string, string, library.PlaylistDeleteInput) (library.PlaylistDeleteResult, error)
 }
 
 type eventBackend interface {
@@ -69,6 +77,7 @@ type recommendationBackend interface {
 
 type impressionBackend interface {
 	Save(context.Context, string, string, recommendation.Request, recommendation.Result) error
+	Owns(context.Context, string, string, string, string) (bool, error)
 }
 
 type Server struct {
@@ -94,7 +103,7 @@ type principal struct {
 type principalContextKey struct{}
 
 func New(config Config) (http.Handler, error) {
-	if config.Database == nil || config.Auth == nil || config.Libraries == nil || config.Events == nil || config.MailOutbox == nil || config.Playback == nil || config.Recommendations == nil {
+	if config.Database == nil || config.Auth == nil || config.Libraries == nil || config.Events == nil || config.MailOutbox == nil || config.Playback == nil || config.Recommendations == nil || config.Impressions == nil {
 		return nil, fmt.Errorf("http api dependencies are incomplete")
 	}
 	if config.MusicEngine == nil {
@@ -131,6 +140,14 @@ func (s *Server) handler(musicEngine http.Handler) http.Handler {
 	mux.Handle("POST /api/v1/me/subscription", s.requireAuth(http.HandlerFunc(s.setSubscription)))
 	mux.Handle("GET /api/v1/library", s.requireAuth(http.HandlerFunc(s.getLibrary)))
 	mux.Handle("PUT /api/v1/library", s.requireAuth(http.HandlerFunc(s.putLibrary)))
+	mux.Handle("GET /api/v1/me/track-preferences", s.requireAuth(http.HandlerFunc(s.getTrackPreferences)))
+	mux.Handle("PUT /api/v1/me/track-preferences", s.requireAuth(http.HandlerFunc(s.putTrackPreference)))
+	mux.Handle("GET /api/v1/history", s.requireAuth(http.HandlerFunc(s.getHistory)))
+	mux.Handle("PUT /api/v1/me/history", s.requireAuth(http.HandlerFunc(s.putHistory)))
+	mux.Handle("DELETE /api/v1/me/history", s.requireAuth(http.HandlerFunc(s.deleteHistory)))
+	mux.Handle("GET /api/v1/me/playlists", s.requireAuth(http.HandlerFunc(s.getPlaylists)))
+	mux.Handle("PUT /api/v1/me/playlists/{playlistID}", s.requireAuth(http.HandlerFunc(s.putPlaylist)))
+	mux.Handle("DELETE /api/v1/me/playlists/{playlistID}", s.requireAuth(http.HandlerFunc(s.deletePlaylist)))
 	mux.Handle("POST /api/v1/events", s.requireAuth(http.HandlerFunc(s.addEvents)))
 	mux.Handle("POST /api/v1/wave", s.requireAuth(http.HandlerFunc(s.wave)))
 	mux.Handle("POST /api/v1/wave/{sessionId}/feedback", s.requireAuth(http.HandlerFunc(s.waveFeedback)))

@@ -474,8 +474,9 @@ export default function Details() {
           <button
             className="danger"
             onClick={() => {
-              app.deletePlaylist(id);
-              navigate("/collection/playlists");
+              if (app.deletePlaylist(id)) {
+                navigate("/collection/playlists");
+              }
             }}
           >
             Удалить
