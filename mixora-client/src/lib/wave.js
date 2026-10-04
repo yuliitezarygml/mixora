@@ -57,6 +57,12 @@ const activityQueries = {
   sleep: "sleep music",
 };
 export function normalizeWave(preferences = {}) {
+  if (
+    !preferences ||
+    typeof preferences !== "object" ||
+    Array.isArray(preferences)
+  )
+    preferences = {};
   const diversity = {
     familiar: "favorite",
     discover: "unknown",

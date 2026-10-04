@@ -4,6 +4,7 @@ import { useApp } from "../state/context.js";
 import Icon from "../components/Icon.jsx";
 import { Cover } from "../components/Primitives.jsx";
 import { TrackList } from "../components/Tracks.jsx";
+import { entityKey } from "../lib/library.js";
 
 function trackCount(count) {
   const form = new Intl.PluralRules("ru").select(count);
@@ -14,14 +15,18 @@ function PlaylistTile({ playlist, own = false }) {
   const app = useApp();
   const [menu, setMenu] = useState(false);
   const root = useRef(null);
-  const pinned = (app.library.pins || []).includes(playlist.id);
+  const pinned = own
+    ? playlist.pinned === true
+    : (app.library.pins || []).includes(entityKey(playlist));
   const liked = own
     ? playlist.liked === true
-    : app.library.savedPlaylists.some((item) => item.id === playlist.id);
+    : app.library.savedPlaylists.some(
+        (item) => entityKey(item) === entityKey(playlist),
+      );
   const tracks = playlist.tracks || [];
   const href = own
     ? `/playlist?id=${playlist.id}`
-    : `/${playlist.album ? "album" : "playlist"}?id=${encodeURIComponent(playlist.id)}`;
+    : `/${playlist.album ? "album" : "playlist"}?id=${encodeURIComponent(playlist.id)}&source=${encodeURIComponent(playlist.source || "soundcloud")}`;
   useEffect(() => {
     if (!menu) return;
     const close = (event) => {
@@ -57,7 +62,7 @@ function PlaylistTile({ playlist, own = false }) {
             className="tile-pin"
             aria-label={pinned ? "Открепить" : "Закрепить"}
             aria-pressed={pinned}
-            onClick={() => app.togglePin(playlist.id)}
+            onClick={() => app.togglePin(playlist)}
           >
             <Icon name={pinned ? "pin_filled_xs" : "pin_xs"} size={18} />
           </button>
@@ -89,7 +94,7 @@ function PlaylistTile({ playlist, own = false }) {
               <button
                 role="menuitem"
                 onClick={() => {
-                  app.togglePin(playlist.id);
+                  app.togglePin(playlist);
                   setMenu(false);
                 }}
               >
@@ -164,24 +169,28 @@ function favoriteArtists(library) {
   const add = (track, seconds = 0) => {
     if (!track?.artist) return;
     const id = track.artistId || track.artist;
-    const row = rows.get(id) || {
+    const key = entityKey({ source: track.source, id });
+    const row = rows.get(key) || {
       id,
+      source: track.source || "soundcloud",
       name: track.artist,
       artwork: track.artwork,
       seconds: 0,
     };
     row.seconds += seconds;
     if (!row.artwork && track.artwork) row.artwork = track.artwork;
-    rows.set(id, row);
+    rows.set(key, row);
   };
-  library.artists.forEach((artist) =>
-    rows.set(artist.id, {
+  library.artists.forEach((artist) => {
+    const key = entityKey(artist);
+    rows.set(key, {
       id: artist.id,
+      source: artist.source || "soundcloud",
       name: artist.name,
       artwork: artist.artwork,
-      seconds: rows.get(artist.id)?.seconds || 0,
-    }),
-  );
+      seconds: rows.get(key)?.seconds || 0,
+    });
+  });
   [...library.likes, ...library.history].forEach((track) =>
     add(track, track.duration || 0),
   );
@@ -252,11 +261,11 @@ export default function CollectionOverview({ onCreate }) {
                 {artists.map((artist, index) => (
                   <div
                     className="CollectionPlaylists_item__YeviY"
-                    key={artist.id}
+                    key={entityKey(artist)}
                   >
                     <Link
                       className="collection-playlist collection-artist"
-                      to={`/artist?id=${encodeURIComponent(artist.id)}`}
+                      to={`/artist?id=${encodeURIComponent(artist.id)}&source=${encodeURIComponent(artist.source || "soundcloud")}`}
                     >
                       <span className="artist-cover">
                         <span className="artist-rank">{index + 1}</span>
@@ -360,13 +369,20 @@ export default function CollectionOverview({ onCreate }) {
                     </div>
                   </div>
                   {library.playlists.map((playlist) => (
-                    <PlaylistTile key={playlist.id} playlist={playlist} own />
+                    <PlaylistTile
+                      key={`mixora:${playlist.id}`}
+                      playlist={playlist}
+                      own
+                    />
                   ))}
                 </div>
               ) : library.savedPlaylists.length ? (
                 <div className="collection-carousel">
                   {library.savedPlaylists.map((playlist) => (
-                    <PlaylistTile key={playlist.id} playlist={playlist} />
+                    <PlaylistTile
+                      key={entityKey(playlist)}
+                      playlist={playlist}
+                    />
                   ))}
                 </div>
               ) : (
@@ -417,11 +433,11 @@ export default function CollectionOverview({ onCreate }) {
                   {library.albums.map((album) => (
                     <div
                       className="CollectionPlaylists_item__YeviY CollectionPlaylists_important__oumcA"
-                      key={album.id}
+                      key={entityKey(album)}
                     >
                       <Link
                         className="collection-playlist"
-                        to={`/album?id=${encodeURIComponent(album.id)}`}
+                        to={`/album?id=${encodeURIComponent(album.id)}&source=${encodeURIComponent(album.source || "soundcloud")}`}
                       >
                         <Cover
                           track={{

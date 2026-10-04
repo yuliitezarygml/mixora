@@ -178,7 +178,10 @@ beckend/
 - Каталог, музыка, метаданные и тексты принадлежат готовому music engine и не
   дублируются обязательной схемой `tracks`/`track_sources`.
 - Пользовательские таблицы хранят непрозрачный `track_ref`, полученный от
-  engine. Клиент не разбирает и не собирает его по правилам SoundCloud/Spotify.
+  engine. Компоненты не разбирают и не собирают provider ID: единственный
+  music API-adapter канонизирует только известные legacy SoundCloud
+  URN/path-like ссылки перед попаданием в очередь. Та же ограниченная
+  нормализация есть на API-границе и в миграциях, а не рассеяна по UI.
 - Для истории и устойчивого UI разрешён небольшой metadata snapshot: название,
   исполнитель, обложка и длительность на момент события.
 - `track_catalog`: provider-neutral metadata snapshot, подготовленный текст,
@@ -197,11 +200,20 @@ beckend/
   возвращает тот же результат, а повтор ключа с другим запросом отклоняется.
 - `user_track_preference_outbox`: coalesced durable-публикация последнего
   состояния в recommender. Это не журнал действий и не новый источник музыки.
+- `user_track_history` и `user_track_history_idempotency`: нормализованная
+  агрегированная история уникальных треков с первым/последним прослушиванием,
+  счётчиком и безопасным replay offline-записи. `user_history_state` хранит
+  монотонную generation очистки, поэтому старая offline-запись не может
+  вернуть историю после clear. Реализованы миграциями `007` и `011`.
+- `user_playlists`, `user_playlist_tracks`, `user_playlist_idempotency`:
+  аккаунтные плейлисты с упорядоченными уникальными track snapshots и
+  идемпотентным полным desired-state обновлением. Каждая запись несёт
+  ожидаемую revision; сервер не принимает устаревшую версию и атомарно держит
+  продуктовый лимит 50 плейлистов на аккаунт. Реализованы миграциями `008`,
+  corrective `009`/`010` для безопасного legacy-import и API-слоем revision.
 - `user_artist_follows`, `user_album_state` — следующие нормализованные
   состояния, пока не реализованы.
-- `playlists`, `playlist_tracks`, `playlist_follows` — следующие таблицы,
-  пока не реализованы.
-- `search_history` и нормализованная история прослушивания — следующие этапы,
+- `playlist_follows` и `search_history` — следующие нормализованные состояния,
   пока не реализованы.
 - `listening_events`: impression, play, listen_30s, complete, skip, repeat,
   seek, like, dislike, add_to_playlist.
@@ -209,11 +221,18 @@ beckend/
 - `recommendation_jobs`: версия расчёта и состояние фоновой обработки.
 
 Для первого совместимого API разрешён `user_libraries.payload JSONB` как
-переходный snapshot. Миграция `006_track_preferences.sql` переносит из него
-валидные likes/dislikes в `user_track_preferences`; после этого snapshot больше
-не является источником истины для этих двух полей. Остальные библиотечные данные
+переходный snapshot. Миграции `006_track_preferences.sql`,
+`007_track_history.sql` и `008_user_playlists.sql` переносят из него валидные
+likes/dislikes, историю и собственные плейлисты. После этого snapshot больше не
+является источником истины для этих полей. Остальные библиотечные данные
 переходят в нормализованные таблицы по мере реализации; события записываются
 нормально с самого начала.
+
+`009`/`010` можно применять только пока переходный snapshot ещё содержит
+исходный legacy-набор треков: они намеренно не придумывают отсутствующие данные.
+При выкладке их нужно применить вместе с сервером до первого transition-write,
+который очищает `payload.playlists`; если источник уже утрачен, требуется
+отдельный аудит данных, а не разрушительный «ремонт» по догадке.
 
 ## 8. API v1 — обязательный контракт
 
@@ -257,9 +276,18 @@ beckend/
 - `GET /api/v1/me/track-preferences` — серверное текущее состояние треков.
 - `PUT /api/v1/me/track-preferences` — идемпотентная запись
   `liked`/`disliked`/`neutral` с треком из уже полученного engine/UI контекста.
-- CRUD `/api/v1/playlists`, порядок треков и `GET /api/v1/history` — ещё не
-  реализованы; прежние hypothetical per-track like/dislike endpoints не входят
-  в текущий контракт.
+- `GET /api/v1/history` возвращает `{ generation, history }`; `PUT
+  /api/v1/me/history` несёт ту же generation и идемпотентную запись. `DELETE
+  /api/v1/me/history` повышает generation и возвращает её. Поздняя запись
+  старого поколения получает `409 history_generation_conflict`, а клиент
+  перезагружает server-owned историю вместо её повторной отправки.
+- `GET /api/v1/me/playlists`, `PUT|DELETE /api/v1/me/playlists/{playlistID}` —
+  аккаунтные плейлисты и полный порядок треков. PUT/DELETE обязаны нести
+  `expected_revision`: создание использует `0`, дальнейшая запись — точную
+  revision сервера; stale write получает `409 playlist_revision_conflict`.
+  Сервер допускает не более 50 собственных плейлистов. `legacy_id` разрешён
+  только при одноразовом backfill и сопоставляется внутри одного аккаунта.
+  Маршрут чтения плейлиста готового music engine не заменяется этим API.
 
 ### Музыка и воспроизведение
 
@@ -269,7 +297,8 @@ beckend/
   единая форма, тонкий app facade или mapper адаптирует ответ без переписывания
   engine и без provider-specific URL в компонентах.
 - Клиент обращается с непрозрачным `track_ref` и использует заявленный engine
-  способ воспроизведения; он не строит SoundCloud/Spotify ID самостоятельно.
+  способ воспроизведения. Разбор единственного legacy SoundCloud формата
+  изолирован в music API-adapter, а не повторяется в компонентах.
 
 ### События и рекомендации
 
@@ -395,9 +424,15 @@ empty, error, offline, keyboard и responsive, после чего пишетс�
 - [x] Нормализованное серверное состояние likes/dislikes/neutral: migration
   из snapshot, идемпотентный API, offline-очередь на аккаунт и durable Gorse
   outbox.
-- [ ] Нормализованная история и её UI/API.
-- [ ] CRUD плейлистов и порядок треков.
-- [ ] Разрешение конфликтов нескольких устройств для history и плейлистов.
+- [x] Нормализованная история и её UI/API: `007`, GET/PUT/DELETE,
+  account-scoped offline-очередь и серверный source для Wave.
+- [x] CRUD плейлистов и порядок треков: `008`/`009`, полная desired-state
+  запись, account-scoped очередь и одношаговое «создать и добавить трек».
+- [x] Защита от тихой потери данных между устройствами: history generation,
+  playlist revision, rebase очереди одного устройства, `409` + загрузка
+  актуального серверного состояния.
+- [ ] Пользовательский выбор/field-level merge двух одновременно изменённых
+  плейлистов, если такой UX окажется нужен продукту.
 - [ ] Пустые состояния и восстановление после offline.
 
 ### Сценарий D: сущности каталога
@@ -416,7 +451,9 @@ empty, error, offline, keyboard и responsive, после чего пишетс�
 - [x] Локальные text embeddings, server-side taste и cold-start по запросу.
 - [x] Optimistic like/dislike/«Вернуть» с текущим серверным состоянием;
   skip и feedback Wave остаются событиями.
-- [ ] Бесконечная дозагрузка и восстановление сессии.
+- [x] Бесконечная дозагрузка и безопасное восстановление Wave-сессии после
+  перезапуска: сохраняется только компактная привязка показанного трека к
+  server-validated session, без cookie и URL потока.
 - [x] Короткое объяснение активного пути: персонализация или rules fallback.
 - [ ] Объяснение причины для каждого отдельного трека.
 
@@ -599,25 +636,23 @@ dislike исключает трек, early skip влияет мягко.
 
 ## 17. Ближайший рабочий порядок
 
-Базовые P0–P3, text-часть P5 и текущее состояние likes/dislikes уже реализованы.
+Базовые P0–P3, text-часть P5, текущее состояние likes/dislikes, история и
+аккаунтные плейлисты уже реализованы.
 Следующая последовательность:
 
-1. Прогнать отдельный ручной Docker smoke контура текущего состояния: migration,
-   offline-клик, повторный вход и проверка последнего Gorse feedback. Затем
-   реализовать нормализованные history и CRUD/ordering плейлистов, не ломая
-   переходный library snapshot.
-2. Разделить `AppContext`, закончить сценарии каталога и состояния
+1. Разделить `AppContext`, закончить сценарии каталога и состояния
    loading/error/offline; проверить Search → play → next → like → reopen в
    браузере и Electron.
-3. Добавить метрики recommendation quality/latency, offline evaluation и
+2. Добавить метрики recommendation quality/latency, offline evaluation и
    объяснение причины для отдельного трека.
-4. Реализовать управляемую exploration и cold-start onboarding в UI.
-5. Исследовать CLAP/audio embeddings только после сравнения с уже работающими
+3. Реализовать управляемую exploration и cold-start onboarding в UI.
+4. Исследовать CLAP/audio embeddings только после сравнения с уже работающими
    text embeddings на накопленных событиях.
-6. Закрыть desktop deep links/IPC и production TLS/SMTP/secrets/backups.
+5. Закрыть desktop deep links/IPC и production TLS/SMTP/secrets/backups.
 
-Плейлисты, метрики, полноценные error/offline-сценарии и production-подготовка
-остаются незавершёнными и не считаются закрытыми наличием работающей Wave.
+Метрики, полноценные error/offline-сценарии, пользовательский merge
+одновременных правок и production-подготовка остаются незавершёнными и не
+считаются закрытыми наличием работающей Wave.
 
 ## 18. Журнал решений
 
@@ -677,8 +712,31 @@ dislike исключает трек, early skip влияет мягко.
   аккаунт оставляет последний выбор. Coalesced PostgreSQL outbox публикует его
   в Gorse с retry/backoff; neutral удаляет оба feedback-сигнала. Wave и
   content taste читают это состояние раньше устаревших одноимённых событий.
-  Целевые Go unit/HTTP contract и клиентские unit tests прошли; ручная Docker
-  проверка полного lifecycle ещё нужна перед production-статусом.
+  Целевые Go unit/HTTP contract и клиентские unit tests прошли; Docker smoke
+  подтвердил публикацию liked → neutral в Gorse и пустой outbox.
+- 2026-10-03: migration `007_track_history.sql` выделила историю из snapshot в
+  агрегированное server-side состояние. Wave теперь читает durable историю
+  прежде временного клиентского overlay.
+- 2026-10-03: migrations `008_user_playlists.sql` и corrective `009`/`010`
+  выделили собственные плейлисты и их порядок из snapshot. Коррекция
+  переимпортирует только legacy-плейлисты с revision `1`, не завися от
+  изменяемого времени всего snapshot. Клиент пишет полный desired state с
+  idempotency key, переносит каждый ещё не представленный legacy-плейлист и
+  сохраняет новый плейлист с первым треком в одной операции. Реальный Docker
+  smoke подтвердил migration, replay, reorder и delete через API.
+- 2026-10-04: `011_user_history_generation.sql` добавила durable clear fence:
+  GET/PUT/DELETE истории согласованы через generation, поэтому поздний offline
+  listen не отменяет очистку. Для плейлистов добавлены optimistic revision,
+  атомарный лимит 50 и account-scoped legacy mapping; конфликт другой машины
+  явно возвращает `409`, а не перезаписывает её desired state. Клиент хранит
+  provider-канонизацию в одном music API-adapter и не дублирует SoundCloud
+  grammar по компонентам.
+- 2026-10-04: клиент сохраняет короткое account-scoped продолжение «Моей
+  волны»: preferences/context/round и mapping `track_ref → session_id`.
+  После перезапуска восстанавливаются только mappings треков из сохранённой
+  очереди, а сервер всё равно проверяет ownership через impressions. Очередь
+  плеера и desktop WebSocket теперь всегда передают окно, содержащее текущий
+  трек, даже после 30-й позиции.
 
 ## 19. Definition of Done всего проекта
 

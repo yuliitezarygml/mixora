@@ -16,6 +16,7 @@ import (
 
 var (
 	ErrHistoryIdempotencyKeyConflict = errors.New("history idempotency key has already been used for a different record")
+	ErrHistoryGenerationConflict     = errors.New("history was cleared after this record was queued")
 	ErrHistoryStoreNoDatabase        = errors.New("track history store requires a database")
 )
 
@@ -27,6 +28,7 @@ type HistoryInput struct {
 	IdempotencyKey string      `json:"idempotency_key"`
 	Track          music.Track `json:"track"`
 	OccurredAt     time.Time   `json:"occurred_at"`
+	Generation     int64       `json:"generation"`
 }
 
 type HistoryEntry struct {
@@ -34,6 +36,13 @@ type HistoryEntry struct {
 	FirstListenedAt time.Time     `json:"first_listened_at"`
 	LastListenedAt  time.Time     `json:"last_listened_at"`
 	PlayCount       int           `json:"play_count"`
+}
+
+// HistorySnapshot is a lock-serialized account view. Generation changes on
+// clear, fencing a listen queued before that clear but delivered afterwards.
+type HistorySnapshot struct {
+	Generation int64          `json:"generation"`
+	History    []HistoryEntry `json:"history"`
 }
 
 // NormalizeHistoryInput validates a client record once, canonicalizes legacy
@@ -48,6 +57,9 @@ func NormalizeHistoryInput(input HistoryInput) (HistoryInput, error) {
 	}
 	if input.OccurredAt.Year() < 2000 || input.OccurredAt.After(time.Now().Add(24*time.Hour)) {
 		return HistoryInput{}, errors.New("occurred_at is outside the accepted range")
+	}
+	if input.Generation < 0 {
+		return HistoryInput{}, errors.New("history generation must not be negative")
 	}
 	snapshot, err := NewTrackSnapshot(input.Track)
 	if err != nil {
@@ -66,7 +78,8 @@ func HistoryRequestFingerprint(input HistoryInput) []byte {
 	body, _ := json.Marshal(struct {
 		Track      TrackSnapshot `json:"track"`
 		OccurredAt time.Time     `json:"occurred_at"`
-	}{Track: snapshot, OccurredAt: input.OccurredAt.UTC()})
+		Generation int64         `json:"generation"`
+	}{Track: snapshot, OccurredAt: input.OccurredAt.UTC(), Generation: input.Generation})
 	sum := sha256.Sum256(body)
 	return append([]byte(nil), sum[:]...)
 }
@@ -111,6 +124,13 @@ func (s *Store) RecordHistory(ctx context.Context, userID string, input HistoryI
 			return HistoryEntry{}, fmt.Errorf("lock track history: %w", err)
 		}
 	}
+	currentGeneration, err := historyGeneration(ctx, tx, userID)
+	if err != nil {
+		return HistoryEntry{}, err
+	}
+	if normalized.Generation != currentGeneration {
+		return HistoryEntry{}, ErrHistoryGenerationConflict
+	}
 
 	if replay, found, err := findHistoryReplay(ctx, tx, userID, normalized.IdempotencyKey, requestHash); err != nil {
 		return HistoryEntry{}, err
@@ -141,34 +161,61 @@ func (s *Store) RecordHistory(ctx context.Context, userID string, input HistoryI
 }
 
 // ClearHistory removes the account's normalized history and its idempotency
-// receipts. The shared per-user advisory lock gives a clear a deterministic
-// ordering relative to a listen arriving from another connected device.
-func (s *Store) ClearHistory(ctx context.Context, userID string) error {
+// receipts, then advances the generation. A queued listen with the old
+// generation is rejected even if it acquires the shared lock after this clear.
+func (s *Store) ClearHistory(ctx context.Context, userID string) (int64, error) {
 	if s == nil || s.db == nil {
-		return ErrHistoryStoreNoDatabase
+		return 0, ErrHistoryStoreNoDatabase
 	}
 	userID = strings.TrimSpace(userID)
 	if err := validatePreferenceText("user id", userID, 128, true); err != nil {
-		return err
+		return 0, err
 	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin track history clear: %w", err)
+		return 0, fmt.Errorf("begin track history clear: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, historyLockKey("user", userID)); err != nil {
-		return fmt.Errorf("lock track history clear: %w", err)
+		return 0, fmt.Errorf("lock track history clear: %w", err)
+	}
+	var generation int64
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO user_history_state(user_id, generation)
+		VALUES ($1, 1)
+		ON CONFLICT (user_id) DO UPDATE
+		SET generation=user_history_state.generation + 1,
+			updated_at=now()
+		RETURNING generation
+	`, userID).Scan(&generation); err != nil {
+		return 0, fmt.Errorf("advance track history generation: %w", err)
 	}
 	// user_track_history_idempotency has an ON DELETE CASCADE foreign key, so
 	// its replay receipts disappear with their referenced history rows.
 	if _, err := tx.Exec(ctx, `DELETE FROM user_track_history WHERE user_id=$1`, userID); err != nil {
-		return fmt.Errorf("clear track history: %w", err)
+		return 0, fmt.Errorf("clear track history: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit track history clear: %w", err)
+		return 0, fmt.Errorf("commit track history clear: %w", err)
 	}
-	return nil
+	return generation, nil
+}
+
+type historyQueryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func historyGeneration(ctx context.Context, q historyQueryer, userID string) (int64, error) {
+	var generation int64
+	err := q.QueryRow(ctx, `SELECT generation FROM user_history_state WHERE user_id=$1`, userID).Scan(&generation)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read track history generation: %w", err)
+	}
+	return generation, nil
 }
 
 func findHistoryReplay(ctx context.Context, tx pgx.Tx, userID, key string, requestHash []byte) (HistoryEntry, bool, error) {
@@ -231,24 +278,43 @@ func upsertHistoryEntry(ctx context.Context, tx pgx.Tx, userID string, snapshot 
 	return entry, rawSnapshot, nil
 }
 
-// ListHistory returns the most recently listened distinct tracks. `limit` is
-// deliberately capped here as well as in HTTP so direct callers cannot turn a
-// collection view into an unbounded database read.
-func (s *Store) ListHistory(ctx context.Context, userID string, limit int) ([]HistoryEntry, error) {
+// GetHistory returns the most recently listened distinct tracks and the clear
+// generation from one lock-serialized snapshot. `limit` is deliberately capped
+// here as well as in HTTP so direct callers cannot turn a collection view into
+// an unbounded database read.
+func (s *Store) GetHistory(ctx context.Context, userID string, limit int) (HistorySnapshot, error) {
 	if s == nil || s.db == nil {
-		return nil, ErrHistoryStoreNoDatabase
+		return HistorySnapshot{}, ErrHistoryStoreNoDatabase
 	}
 	userID = strings.TrimSpace(userID)
 	if err := validatePreferenceText("user id", userID, 128, true); err != nil {
-		return nil, err
-	}
-	if limit <= 0 {
-		return []HistoryEntry{}, nil
+		return HistorySnapshot{}, err
 	}
 	if limit > 100 {
 		limit = 100
 	}
-	rows, err := s.db.Query(ctx, `
+	if limit < 0 {
+		limit = 0
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return HistorySnapshot{}, fmt.Errorf("begin track history list: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, historyLockKey("user", userID)); err != nil {
+		return HistorySnapshot{}, fmt.Errorf("lock track history list: %w", err)
+	}
+	generation, err := historyGeneration(ctx, tx, userID)
+	if err != nil {
+		return HistorySnapshot{}, err
+	}
+	if limit == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return HistorySnapshot{}, fmt.Errorf("commit empty track history list: %w", err)
+		}
+		return HistorySnapshot{Generation: generation, History: []HistoryEntry{}}, nil
+	}
+	rows, err := tx.Query(ctx, `
 		SELECT track_snapshot, first_listened_at, last_listened_at, play_count
 		FROM user_track_history
 		WHERE user_id=$1
@@ -256,28 +322,44 @@ func (s *Store) ListHistory(ctx context.Context, userID string, limit int) ([]Hi
 		LIMIT $2
 	`, userID, limit)
 	if err != nil {
-		return nil, fmt.Errorf("list track history: %w", err)
+		return HistorySnapshot{}, fmt.Errorf("list track history: %w", err)
 	}
-	defer rows.Close()
 
 	result := make([]HistoryEntry, 0, limit)
 	for rows.Next() {
 		var entry HistoryEntry
 		var rawSnapshot []byte
 		if err := rows.Scan(&rawSnapshot, &entry.FirstListenedAt, &entry.LastListenedAt, &entry.PlayCount); err != nil {
-			return nil, fmt.Errorf("scan track history: %w", err)
+			rows.Close()
+			return HistorySnapshot{}, fmt.Errorf("scan track history: %w", err)
 		}
 		snapshot, err := decodeTrackSnapshot(rawSnapshot)
 		if err != nil {
-			return nil, fmt.Errorf("decode track history: %w", err)
+			rows.Close()
+			return HistorySnapshot{}, fmt.Errorf("decode track history: %w", err)
 		}
 		entry.Track = snapshot
 		result = append(result, entry)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate track history: %w", err)
+		rows.Close()
+		return HistorySnapshot{}, fmt.Errorf("iterate track history: %w", err)
 	}
-	return result, nil
+	rows.Close()
+	if err := tx.Commit(ctx); err != nil {
+		return HistorySnapshot{}, fmt.Errorf("commit track history list: %w", err)
+	}
+	return HistorySnapshot{Generation: generation, History: result}, nil
+}
+
+// ListHistory keeps direct callers on the compact entries-only seam while the
+// HTTP transport uses GetHistory to expose the matching generation.
+func (s *Store) ListHistory(ctx context.Context, userID string, limit int) ([]HistoryEntry, error) {
+	snapshot, err := s.GetHistory(ctx, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.History, nil
 }
 
 // RecommendationHistory exposes the same compact, server-owned recent tracks

@@ -2,12 +2,8 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Cover, Empty } from "./Primitives.jsx";
 import { useApp } from "../state/context.js";
-import {
-  catalogResource,
-  collectionItems,
-  soundcloudPlaylist,
-  soundcloudTrack,
-} from "../lib/api.js";
+import { providerArtistTracks, providerPlaylistTracks } from "../lib/api.js";
+import { entityKey } from "../lib/library.js";
 import Icon from "./Icon.jsx";
 
 function firstPlayable(tracks, explicit) {
@@ -20,10 +16,10 @@ export function ArtistCards({ items }) {
   const app = useApp();
   const [busy, setBusy] = useState("");
   const playArtist = async (artist) => {
-    setBusy(artist.id);
+    const key = entityKey(artist);
+    setBusy(key);
     try {
-      const data = await catalogResource("users", artist.id, "tracks");
-      const tracks = collectionItems(data).map(soundcloudTrack);
+      const tracks = await providerArtistTracks(artist);
       app.play(firstPlayable(tracks, app.settings.explicit), tracks);
     } catch (error) {
       app.toast(error.message);
@@ -34,19 +30,21 @@ export function ArtistCards({ items }) {
   return (
     <div className="card-grid">
       {items.map((artist) => (
-        <article className="artist-card" key={artist.id}>
+        <article className="artist-card" key={entityKey(artist)}>
           <div className="card-image">
             <Cover track={{ artwork: artist.artwork }} large />
             <button
               className="card-play"
               aria-label={`Слушать ${artist.name}`}
-              disabled={busy === artist.id}
+              disabled={busy === entityKey(artist)}
               onClick={() => playArtist(artist)}
             >
               <Icon name="play_filled_l" size={48} />
             </button>
           </div>
-          <Link to={`/artist?id=${encodeURIComponent(artist.id)}`}>
+          <Link
+            to={`/artist?id=${encodeURIComponent(artist.id)}&source=${encodeURIComponent(artist.source || "soundcloud")}`}
+          >
             <strong>{artist.name}</strong>
           </Link>
           <span className="muted">Исполнитель</span>
@@ -59,13 +57,12 @@ export function PlaylistGrid({ items }) {
   const app = useApp();
   const [busy, setBusy] = useState("");
   const playItem = async (item) => {
-    setBusy(item.id);
+    const key = entityKey(item);
+    setBusy(key);
     try {
       let tracks = item.tracks || [];
       if (!tracks.length) {
-        tracks = soundcloudPlaylist(
-          await catalogResource("playlists", item.id),
-        ).tracks;
+        tracks = await providerPlaylistTracks(item);
       }
       app.play(firstPlayable(tracks, app.settings.explicit), tracks);
     } catch (error) {
@@ -77,7 +74,7 @@ export function PlaylistGrid({ items }) {
   return (
     <div className="card-grid">
       {items.map((item) => (
-        <article className="music-card" key={item.id}>
+        <article className="music-card" key={entityKey(item)}>
           <div className="card-image">
             <Cover
               track={{ artwork: item.artwork || item.tracks?.[0]?.artwork }}
@@ -86,7 +83,7 @@ export function PlaylistGrid({ items }) {
             <button
               className="card-play"
               aria-label={`Слушать ${item.name}`}
-              disabled={busy === item.id}
+              disabled={busy === entityKey(item)}
               onClick={() => playItem(item)}
             >
               <Icon name="play_filled_l" size={48} />
@@ -94,7 +91,7 @@ export function PlaylistGrid({ items }) {
           </div>
           <Link
             className="card-title"
-            to={`/${item.album ? "album" : "playlist"}?id=${encodeURIComponent(item.id)}`}
+            to={`/${item.album ? "album" : "playlist"}?id=${encodeURIComponent(item.id)}&source=${encodeURIComponent(item.source || "soundcloud")}`}
           >
             {item.name}
           </Link>

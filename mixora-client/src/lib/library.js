@@ -1,4 +1,18 @@
 export const trackKey = (t) => `${t.source}:${t.id}`;
+
+// Collections contain more than tracks. Keep their identity provider-aware as
+// well: Spotify, SoundCloud and an imported source can legitimately expose
+// the same opaque ID. `fallbackSource` preserves browser data saved before
+// providers were added (those entries were SoundCloud-only).
+export function entityKey(entity, fallbackSource = "soundcloud") {
+  if (!entity || typeof entity !== "object") return "";
+  const source = String(entity.source || fallbackSource)
+    .trim()
+    .toLowerCase();
+  const id = String(entity.id ?? "").trim();
+  return source && id ? `${source}:${id}` : "";
+}
+
 export function duration(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;

@@ -4,6 +4,7 @@ import { api, getTrackPlayback, post, put } from "../lib/api.js";
 import {
   readStorage,
   saveStorage,
+  entityKey,
   trackKey,
   uniqueTracks,
   shuffleTracks,
@@ -11,7 +12,10 @@ import {
   libraryCount,
 } from "../lib/library.js";
 import { dropAccountToken, rememberAccount } from "../lib/accounts.js";
-import { playbackSnapshot } from "../lib/playbackSync.js";
+import {
+  playbackSnapshot,
+  playerStorageSnapshot,
+} from "../lib/playbackSync.js";
 import {
   acknowledgeEvents,
   enqueueEvent,
@@ -20,12 +24,14 @@ import {
 } from "../lib/eventQueue.js";
 import {
   acknowledgeHistoryRecords,
+  bindHistoryGeneration,
   createHistoryRecord,
   enqueueHistoryRecord,
   historyBatch,
   historyEntries,
   historyQueueKey,
   historyRequest,
+  historySnapshot,
   mergeHistory,
   mergeHistoryEntries,
   normalizeHistoryEntry,
@@ -34,6 +40,7 @@ import {
   acknowledgePlaylistMutations,
   createPlaylistDeleteMutation,
   createPlaylistMutation,
+  discardPlaylistMutations,
   enqueuePlaylistMutation,
   legacyPlaylistBackfill,
   mergePlaylists,
@@ -42,10 +49,17 @@ import {
   playlistQueueKey,
   playlistRequest,
   playlistState,
+  rebasePlaylistMutations,
 } from "../lib/playlists.js";
 import { buildWave, defaultWave } from "../lib/wave.js";
 import { waveFeedbackPath, withWaveSession } from "../lib/waveFeedback.js";
 import { buildWaveRequest, decodeWaveResponse } from "../lib/waveRequest.js";
+import {
+  createWaveSessionSnapshot,
+  restoreWaveSession,
+  updateWaveTrackSessions,
+  waveSessionStorageKey,
+} from "../lib/waveSession.js";
 import {
   acknowledgeTrackPreferences,
   createTrackPreferenceMutation,
@@ -91,11 +105,30 @@ const emptyLibrary = () => ({
   listens: [],
   pins: null,
 });
+const mixoraPlaylistKey = (playlist) => entityKey(playlist, "mixora");
+const storedPinKey = (value, library) => {
+  if (value && typeof value === "object") return entityKey(value);
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  // Current pin values are provider-aware. Older browser snapshots carried
+  // bare IDs, so recover their intended source from the stored collection.
+  if (raw.includes(":")) return raw;
+  const own = (library?.playlists || []).find((item) => item.id === raw);
+  if (own) return mixoraPlaylistKey(own);
+  const saved = (library?.savedPlaylists || []).find(
+    (item) => item.id === raw,
+  );
+  return saved ? entityKey(saved) : `mixora:${raw}`;
+};
 function withPins(library) {
-  if (Array.isArray(library.pins)) return library;
+  const values = Array.isArray(library.pins)
+    ? library.pins
+    : (library.playlists || []).map(mixoraPlaylistKey);
   return {
     ...library,
-    pins: (library.playlists || []).map((playlist) => playlist.id),
+    pins: [...new Set(values.map((value) => storedPinKey(value, library)))].filter(
+      Boolean,
+    ),
   };
 }
 const loadLibrary = (key) =>
@@ -214,6 +247,7 @@ export function AppProvider({ children }) {
     latest = useRef({}),
     resumeRef = useRef(null),
     restoredRef = useRef(""),
+    waveRestoredRef = useRef(""),
     eventFlushRef = useRef(false),
     historyFlushRef = useRef(false),
     historyClearingRef = useRef(false),
@@ -222,6 +256,7 @@ export function AppProvider({ children }) {
       userId: "",
       loaded: false,
       entries: [],
+      generation: 0,
     }),
     playlistFlushRef = useRef(false),
     playlistLoadRef = useRef(""),
@@ -439,13 +474,8 @@ export function AppProvider({ children }) {
       }
     }
   };
-  const pendingHistoryRecords = (userId) =>
-    storedList(historyQueueKey(userId));
-  const applyHistoryState = (
-    userId,
-    remote,
-    { authoritative = true } = {},
-  ) => {
+  const pendingHistoryRecords = (userId) => storedList(historyQueueKey(userId));
+  const applyHistoryState = (userId, remote, { authoritative = true } = {}) => {
     if (userRef.current?.id !== userId) return;
     const key = `mixora-ui:library:${userId}`;
     const entries = historyEntries(remote);
@@ -459,11 +489,14 @@ export function AppProvider({ children }) {
     });
   };
   const flushHistory = async (userId = userRef.current?.id) => {
+    const currentState = historyStateRef.current;
     if (
       !userId ||
       userRef.current?.id !== userId ||
       historyFlushRef.current ||
       historyClearingRef.current ||
+      currentState.userId !== userId ||
+      !currentState.loaded ||
       navigator.onLine === false
     ) {
       return;
@@ -475,7 +508,7 @@ export function AppProvider({ children }) {
     if (!request) return;
 
     historyFlushRef.current = true;
-    let delivered = false;
+    let settled = false;
     try {
       const result = await put("/me/history", request);
       // A clear may have started while this PUT was waiting for the server.
@@ -499,8 +532,24 @@ export function AppProvider({ children }) {
       } else {
         applyHistoryState(userId, [entry], { authoritative: false });
       }
-      delivered = true;
-    } catch {
+      settled = true;
+    } catch (error) {
+      if (error?.code === "history_generation_conflict") {
+        saveStorage(
+          key,
+          acknowledgeHistoryRecords(readStorage(key, []), [record]),
+        );
+        const state = historyStateRef.current;
+        if (state.userId === userId) {
+          applyHistoryState(userId, state.entries, {
+            authoritative: state.loaded,
+          });
+        }
+        settled = true;
+        if (!historyClearingRef.current)
+          queueMicrotask(() => loadHistory(userId));
+        return;
+      }
       // Keep the exact idempotency key and occurrence time for the next
       // reconnect. A retry is therefore safe even after a response timeout.
     } finally {
@@ -508,7 +557,7 @@ export function AppProvider({ children }) {
       const activeUserId = userRef.current?.id;
       if (activeUserId && activeUserId !== userId) {
         queueMicrotask(() => flushHistory(activeUserId));
-      } else if (delivered && historyBatch(readStorage(key, []), 1).length) {
+      } else if (settled && historyBatch(readStorage(key, []), 1).length) {
         queueMicrotask(() => flushHistory(userId));
       }
     }
@@ -527,18 +576,28 @@ export function AppProvider({ children }) {
       const response = await api("/history?limit=100");
       if (userRef.current?.id !== userId || historyClearingRef.current)
         return false;
+      const snapshot = historySnapshot(response);
+      const queueKey = historyQueueKey(userId);
+      saveStorage(
+        queueKey,
+        bindHistoryGeneration(readStorage(queueKey, []), snapshot.generation),
+      );
       const previous = historyStateRef.current;
       // A PUT can finish while this GET is in flight. Retain the newer PUT
-      // aggregate so a late GET cannot visually roll back the play count or
-      // remove a just-heard track.
+      // aggregate only within the same clear generation. A new generation is
+      // an account-wide clear and must remove the old in-memory entries.
       const entries = mergeHistoryEntries(
-        historyEntries(response),
-        previous.userId === userId ? previous.entries : [],
+        snapshot.entries,
+        previous.userId === userId &&
+          previous.generation === snapshot.generation
+          ? previous.entries
+          : [],
       );
       historyStateRef.current = {
         userId,
         loaded: true,
         entries,
+        generation: snapshot.generation,
       };
       applyHistoryState(userId, entries);
       void flushHistory(userId);
@@ -550,6 +609,7 @@ export function AppProvider({ children }) {
         userId,
         loaded: false,
         entries: previous.userId === userId ? previous.entries : [],
+        generation: previous.userId === userId ? previous.generation : 0,
       };
       // Browser-local history remains usable while the API is unavailable.
       void flushHistory(userId);
@@ -572,11 +632,20 @@ export function AppProvider({ children }) {
 
     historyClearingRef.current = true;
     try {
-      await api("/me/history", { method: "DELETE" });
+      const cleared = await api("/me/history", { method: "DELETE" });
       if (userRef.current?.id !== userId) return false;
 
       saveStorage(historyQueueKey(userId), []);
-      historyStateRef.current = { userId, loaded: true, entries: [] };
+      historyStateRef.current = {
+        userId,
+        loaded: true,
+        entries: [],
+        generation:
+          Number.isSafeInteger(Number(cleared?.generation)) &&
+          Number(cleared.generation) >= 0
+            ? Number(cleared.generation)
+            : historyStateRef.current.generation + 1,
+      };
       applyHistoryState(userId, []);
       toast("История прослушивания очищена.");
       return true;
@@ -586,7 +655,8 @@ export function AppProvider({ children }) {
       return false;
     } finally {
       historyClearingRef.current = false;
-      if (userRef.current?.id === userId) queueMicrotask(() => flushHistory(userId));
+      if (userRef.current?.id === userId)
+        queueMicrotask(() => flushHistory(userId));
     }
   };
   const pendingPlaylistMutations = (userId) =>
@@ -611,16 +681,12 @@ export function AppProvider({ children }) {
     });
   };
   const enqueueLegacyPlaylists = (userId, remote) => {
-    if (
-      playlistState(remote).length ||
-      readStorage(playlistBackfillMarkerKey(userId), false) === true
-    ) {
+    if (readStorage(playlistBackfillMarkerKey(userId), false) === true)
       return false;
-    }
     const candidates = legacyPlaylistBackfill(
       loadLibrary(`mixora-ui:library:${userId}`),
+      { remote },
     );
-    if (!candidates.length) return false;
     const key = playlistQueueKey(userId);
     let queue = readStorage(key, []);
     for (const mutation of candidates) {
@@ -644,7 +710,7 @@ export function AppProvider({ children }) {
     if (!mutation || !request) return;
 
     playlistFlushRef.current = true;
-    let delivered = false;
+    let settled = false;
     try {
       const result =
         request.method === "PUT"
@@ -653,19 +719,30 @@ export function AppProvider({ children }) {
               method: request.method,
               body: JSON.stringify(request.body),
             });
-      saveStorage(
-        key,
-        acknowledgePlaylistMutations(readStorage(key, []), [mutation]),
-      );
+      const target =
+        mutation.type === "replace"
+          ? mutation.playlist.id
+          : mutation.playlist_id;
+      let remaining = acknowledgePlaylistMutations(readStorage(key, []), [
+        mutation,
+      ]);
       const state = playlistStateRef.current;
       if (state.userId === userId) {
         let values = state.values;
         if (mutation.type === "replace") {
           const [saved] = playlistState([result]);
           if (saved) {
+            remaining = rebasePlaylistMutations(
+              remaining,
+              target,
+              saved.revision,
+            );
             values = [
               saved,
-              ...values.filter((playlist) => playlist.id !== saved.id),
+              ...values.filter(
+                (playlist) =>
+                  playlist.id !== saved.id && playlist.id !== target,
+              ),
             ];
           }
         } else {
@@ -673,21 +750,54 @@ export function AppProvider({ children }) {
             (playlist) => playlist.id !== mutation.playlist_id,
           );
         }
+        saveStorage(key, remaining);
         playlistStateRef.current = { ...state, values };
         applyPlaylistState(userId, values, { authoritative: state.loaded });
       } else {
+        saveStorage(key, remaining);
         applyPlaylistState(userId, [], { authoritative: false });
       }
-      delivered = true;
-    } catch {
-      // Keep the newest complete playlist state and the same key for a safe
-      // retry. A later local edit coalesces only this playlist's queue entry.
+      settled = true;
+    } catch (error) {
+      const permanent =
+        error?.status === 400 ||
+        [
+          "idempotency_conflict",
+          "playlist_limit_reached",
+          "playlist_revision_conflict",
+        ].includes(error?.code);
+      if (!permanent) return;
+      const target =
+        mutation.type === "replace"
+          ? mutation.playlist.id
+          : mutation.playlist_id;
+      saveStorage(key, discardPlaylistMutations(readStorage(key, []), target));
+      const state = playlistStateRef.current;
+      if (state.userId === userId) {
+        applyPlaylistState(userId, state.values, {
+          authoritative: state.loaded,
+        });
+      }
+      if (userRef.current?.id === userId) {
+        if (error?.code === "playlist_revision_conflict") {
+          toast(
+            "Плейлист изменён на другом устройстве. Загрузили актуальную версию.",
+          );
+          queueMicrotask(() => loadPlaylists(userId));
+        } else if (error?.code === "playlist_limit_reached") {
+          toast("В аккаунте можно хранить не более 50 плейлистов.");
+          queueMicrotask(() => loadPlaylists(userId));
+        } else {
+          toast(error?.message || "Не удалось сохранить плейлист.");
+        }
+      }
+      settled = true;
     } finally {
       playlistFlushRef.current = false;
       const activeUserId = userRef.current?.id;
       if (activeUserId && activeUserId !== userId) {
         queueMicrotask(() => flushPlaylists(activeUserId));
-      } else if (delivered && playlistBatch(readStorage(key, []), 1).length) {
+      } else if (settled && playlistBatch(readStorage(key, []), 1).length) {
         queueMicrotask(() => flushPlaylists(userId));
       }
     }
@@ -779,7 +889,13 @@ export function AppProvider({ children }) {
       duration_ms: Math.round((audioRef.current?.duration || 0) * 1000),
     });
     const userId = userRef.current?.id;
-    const record = createHistoryRecord(track);
+    const historyState = historyStateRef.current;
+    const record = createHistoryRecord(track, {
+      generation:
+        historyState.userId === userId && historyState.loaded
+          ? historyState.generation
+          : null,
+    });
     if (userId && record && !historyClearingRef.current) {
       const key = historyQueueKey(userId);
       const nextQueue = enqueueHistoryRecord(readStorage(key, []), record);
@@ -801,8 +917,12 @@ export function AppProvider({ children }) {
     }
     if (origin !== "wave") {
       waveGeneration.current++;
+      waveRound.current = 0;
       waveSession.current = "";
       waveTrackSessions.current.clear();
+      waveRestoredRef.current = "";
+      const userId = userRef.current?.id;
+      if (userId) saveStorage(waveSessionStorageKey(userId), null);
       setWaveModelVersion("rules-v0");
       setWaveActive(false);
       setWaveBusy(false);
@@ -941,12 +1061,12 @@ export function AppProvider({ children }) {
   };
   const applyWaveResult = (result) => {
     waveSession.current = result.sessionId;
+    waveTrackSessions.current = updateWaveTrackSessions(
+      waveTrackSessions.current,
+      result.tracks,
+      result.sessionId,
+    );
     setWaveModelVersion(result.modelVersion);
-    if (result.sessionId) {
-      for (const track of result.tracks) {
-        waveTrackSessions.current.set(trackKey(track), result.sessionId);
-      }
-    }
     if (result.tracks.length) {
       setCatalog((previous) => uniqueTracks([...previous, ...result.tracks]));
     }
@@ -963,7 +1083,9 @@ export function AppProvider({ children }) {
     const generation = ++waveGeneration.current;
     waveSession.current = "";
     waveTrackSessions.current.clear();
+    saveStorage(waveSessionStorageKey(user.id), null);
     setWaveModelVersion("rules-v0");
+    setWaveActive(false);
     setWaveBusy(true);
     setWaveContext(context);
     setSettings({ wave: preferences });
@@ -1028,8 +1150,10 @@ export function AppProvider({ children }) {
   const toggleSaved = (field, entity) =>
     updateLibrary((s) => ({
       ...s,
-      [field]: s[field].some((x) => x.id === entity.id)
-        ? s[field].filter((x) => x.id !== entity.id)
+      [field]: s[field].some(
+        (item) => entityKey(item) === entityKey(entity),
+      )
+        ? s[field].filter((item) => entityKey(item) !== entityKey(entity))
         : [entity, ...s[field]],
     }));
   const savePlaylistState = (playlist) => {
@@ -1107,6 +1231,10 @@ export function AppProvider({ children }) {
     toast("Трек добавлен в очередь");
   };
   const createPlaylist = (name, tracks = []) => {
+    if (library.playlists.length >= 50) {
+      toast("В аккаунте можно хранить не более 50 плейлистов.");
+      return null;
+    }
     const p = {
       id: crypto.randomUUID(),
       name: name.trim(),
@@ -1131,7 +1259,8 @@ export function AppProvider({ children }) {
       toast("Этот трек уже есть в плейлисте");
       return false;
     }
-    if (!editPlaylist(id, { tracks: [...playlist.tracks, track] })) return false;
+    if (!editPlaylist(id, { tracks: [...playlist.tracks, track] }))
+      return false;
     recordEvent("add_to_playlist", track, { context: { playlist_id: id } });
     toast("Трек добавлен в плейлист");
     return true;
@@ -1153,13 +1282,16 @@ export function AppProvider({ children }) {
       setAuthOpen(true);
       return false;
     }
-    const mutation = createPlaylistDeleteMutation(id);
+    const playlist = library.playlists.find((item) => item.id === id);
+    const mutation = createPlaylistDeleteMutation(playlist || id);
     if (!mutation) {
       toast("Не удалось удалить плейлист.");
       return false;
     }
     const key = playlistQueueKey(userId);
-    if (!saveStorage(key, enqueuePlaylistMutation(readStorage(key, []), mutation))) {
+    if (
+      !saveStorage(key, enqueuePlaylistMutation(readStorage(key, []), mutation))
+    ) {
       toast("Не удалось сохранить удаление плейлиста на этом устройстве.");
       return false;
     }
@@ -1167,16 +1299,26 @@ export function AppProvider({ children }) {
     void flushPlaylists(userId);
     return true;
   };
-  const togglePin = (id) => {
-    const playlist = library.playlists.find((item) => item.id === id);
+  const togglePin = (value) => {
+    const id = typeof value === "object" ? value?.id : value;
+    const playlist =
+      typeof value === "object" && value?.source
+        ? undefined
+        : library.playlists.find((item) => item.id === id);
     if (playlist) return editPlaylist(id, { pinned: !playlist.pinned });
+    const saved =
+      typeof value === "object"
+        ? value
+        : library.savedPlaylists.find((item) => item.id === id);
+    const key = entityKey(saved);
+    if (!key) return null;
     return updateLibrary((s) => {
       const pins = s.pins || [];
       return {
         ...s,
-        pins: pins.includes(id)
-          ? pins.filter((pin) => pin !== id)
-          : [id, ...pins],
+        pins: pins.includes(key)
+          ? pins.filter((pin) => pin !== key)
+          : [key, ...pins],
       };
     });
   };
@@ -1236,8 +1378,11 @@ export function AppProvider({ children }) {
       }
       audioRef.current?.pause();
       waveGeneration.current++;
+      waveRound.current = 0;
+      waveFetching.current = false;
       waveSession.current = "";
       waveTrackSessions.current.clear();
+      waveRestoredRef.current = "";
       setWaveModelVersion("rules-v0");
       setWaveActive(false);
       setWaveBusy(false);
@@ -1251,6 +1396,7 @@ export function AppProvider({ children }) {
         userId: "",
         loaded: false,
         entries: [],
+        generation: 0,
       };
       historyClearingRef.current = false;
       playlistStateRef.current = {
@@ -1298,6 +1444,15 @@ export function AppProvider({ children }) {
   }, []);
   useEffect(() => {
     if (!sessionReady || !user?.id) {
+      waveGeneration.current++;
+      waveRound.current = 0;
+      waveFetching.current = false;
+      waveSession.current = "";
+      waveTrackSessions.current.clear();
+      waveRestoredRef.current = "";
+      setWaveModelVersion("rules-v0");
+      setWaveActive(false);
+      setWaveBusy(false);
       preferenceStateRef.current = {
         userId: "",
         loaded: false,
@@ -1308,6 +1463,7 @@ export function AppProvider({ children }) {
         userId: "",
         loaded: false,
         entries: [],
+        generation: 0,
       };
       historyClearingRef.current = false;
       playlistStateRef.current = {
@@ -1318,6 +1474,14 @@ export function AppProvider({ children }) {
       return;
     }
     const userId = user.id;
+    waveGeneration.current++;
+    waveRound.current = 0;
+    waveFetching.current = false;
+    waveSession.current = "";
+    waveTrackSessions.current.clear();
+    setWaveModelVersion("rules-v0");
+    setWaveActive(false);
+    setWaveBusy(false);
     preferenceStateRef.current = {
       userId,
       loaded: false,
@@ -1328,6 +1492,7 @@ export function AppProvider({ children }) {
       userId,
       loaded: false,
       entries: [],
+      generation: 0,
     };
     historyClearingRef.current = false;
     playlistStateRef.current = {
@@ -1438,15 +1603,67 @@ export function AppProvider({ children }) {
     setIndex(Math.max(0, Math.min(saved.index || 0, list.length - 1)));
   }, [sessionReady, user?.id]);
   useEffect(() => {
+    if (!sessionReady || !user?.id) return;
+    const userId = user.id;
+    if (waveRestoredRef.current === userId) return;
+    waveRestoredRef.current = userId;
+
+    const player = readStorage(`mixora-ui:player:${userId}`, null);
+    const restoredQueue =
+      Array.isArray(player?.queue) && player.queue.length
+        ? player.queue
+        : player?.track
+          ? [player.track]
+          : [];
+    const restored = restoreWaveSession(
+      readStorage(waveSessionStorageKey(userId), null),
+      restoredQueue,
+    );
+    if (!restored) return;
+
+    waveRound.current = restored.round;
+    waveSession.current = [...restored.trackSessions.values()].at(-1) || "";
+    waveTrackSessions.current = restored.trackSessions;
+    setWaveModelVersion(restored.modelVersion);
+    setWaveContext(restored.context);
+    setSettings({ wave: restored.preferences });
+    setWaveActive(true);
+  }, [sessionReady, user?.id]);
+  useEffect(() => {
+    if (!sessionReady || !user?.id || !waveActive) return;
+    saveStorage(
+      waveSessionStorageKey(user.id),
+      createWaveSessionSnapshot({
+        modelVersion: waveModelVersion,
+        preferences: settings.wave,
+        context: waveContext,
+        round: waveRound.current,
+        trackSessions: waveTrackSessions.current,
+      }),
+    );
+  }, [
+    sessionReady,
+    user?.id,
+    waveActive,
+    waveModelVersion,
+    settings.wave,
+    waveContext,
+    queue.length,
+    index,
+  ]);
+  useEffect(() => {
     if (!sessionReady || !current) return;
     const id = user?.id || "guest";
     const timer = setTimeout(() => {
-      saveStorage(`mixora-ui:player:${id}`, {
-        track: current,
-        queue: queue.slice(0, 30),
-        index,
-        position: Math.round((audioRef.current?.currentTime || 0) * 10) / 10,
-      });
+      saveStorage(
+        `mixora-ui:player:${id}`,
+        playerStorageSnapshot(
+          current,
+          index,
+          audioRef.current?.currentTime || 0,
+          queue,
+        ),
+      );
     }, 500);
     return () => clearTimeout(timer);
   }, [
@@ -1584,7 +1801,7 @@ export function AppProvider({ children }) {
     setPlaybackError("");
     (async () => {
       try {
-        const playback = await getTrackPlayback(current.id, controller.signal);
+        const playback = await getTrackPlayback(current, controller.signal);
         if (cancelled) return;
         if (playback.format === "hls") {
           const { default: Hls } = await import("hls.js");

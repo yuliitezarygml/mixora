@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   acknowledgeHistoryRecords,
+  bindHistoryGeneration,
   canonicalHistoryTrack,
   createHistoryRecord,
   enqueueHistoryRecord,
@@ -9,6 +10,7 @@ import {
   historyEntries,
   historyQueueKey,
   historyRequest,
+  historySnapshot,
   mergeHistory,
   mergeHistoryEntries,
 } from "./history.js";
@@ -34,7 +36,7 @@ const entry = (id, lastListenedAt, options = {}) => ({
   play_count: options.play_count || 1,
 });
 
-test("creates a compact canonical SoundCloud history record", () => {
+test("creates a compact history record with the music adapter's canonical reference", () => {
   const created = createHistoryRecord(
     {
       id: "soundcloud:tracks:1534086151",
@@ -53,6 +55,7 @@ test("creates a compact canonical SoundCloud history record", () => {
   assert.deepEqual(created, {
     idempotency_key: "history-1",
     occurred_at: "2026-10-03T12:34:56.000Z",
+    generation: 0,
     track: {
       id: "1534086151",
       source: "soundcloud",
@@ -101,10 +104,10 @@ test("history queue retains repeat listens and acknowledges only the delivered r
     ["history-repeat", "history-next"],
   );
 
-  const retried = enqueueHistoryRecord(
-    queued,
-    { ...first, occurred_at: "2026-10-03T10:03:00Z" },
-  );
+  const retried = enqueueHistoryRecord(queued, {
+    ...first,
+    occurred_at: "2026-10-03T10:03:00Z",
+  });
   assert.deepEqual(
     retried.map((item) => item.idempotency_key),
     ["history-repeat", "history-next", "history-first"],
@@ -121,7 +124,32 @@ test("request shape excludes queue bookkeeping and uses the original idempotent 
   assert.deepEqual(historyRequest(value), {
     idempotency_key: "history-42",
     occurred_at: "2026-10-03T10:00:00.000Z",
+    generation: 0,
     track: track("42"),
+  });
+});
+
+test("binds current-session listens to GET generation and drops pre-clear queue records", () => {
+  const currentSession = createHistoryRecord(track("fresh"), {
+    id: () => "history-fresh",
+    now: () => "2026-10-03T10:00:00Z",
+    generation: null,
+  });
+  const oldQueue = {
+    idempotency_key: "history-old",
+    occurred_at: "2026-10-03T09:00:00Z",
+    track: track("old"),
+    generation: 0,
+  };
+  const rebound = bindHistoryGeneration([oldQueue, currentSession], 1);
+  assert.deepEqual(
+    rebound.map((item) => [item.idempotency_key, item.generation]),
+    [["history-fresh", 1]],
+  );
+  assert.equal(historyRequest(currentSession), null);
+  assert.deepEqual(historySnapshot({ generation: 3, history: [] }), {
+    generation: 3,
+    entries: [],
   });
 });
 
@@ -146,7 +174,10 @@ test("remote history is authoritative while unsent listens stay visible", () => 
     merged.history.map((item) => item.id),
     ["offline", "remote-new", "remote-old"],
   );
-  assert.deepEqual(merged.likes.map((item) => item.id), ["liked"]);
+  assert.deepEqual(
+    merged.likes.map((item) => item.id),
+    ["liked"],
+  );
 });
 
 test("server entries and an in-flight PUT reconcile without duplicate tracks", () => {

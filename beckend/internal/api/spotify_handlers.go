@@ -64,6 +64,7 @@ func (h *Handler) SpotifyTrackHandler(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.observeSpotifyTrack(r.Context(), *track)
 
 	JSON(w, http.StatusOK, track)
 }
@@ -136,6 +137,7 @@ func (h *Handler) SpotifyAlbumHandler(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.observeSpotifyTracks(r.Context(), album.Tracks)
 
 	JSON(w, http.StatusOK, album)
 }
@@ -162,6 +164,7 @@ func (h *Handler) SpotifyArtistHandler(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.observeSpotifyTracks(r.Context(), artist.TopTracks)
 
 	JSON(w, http.StatusOK, artist)
 }
@@ -188,6 +191,7 @@ func (h *Handler) SpotifyPlaylistHandler(w http.ResponseWriter, r *http.Request)
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.observeSpotifyTracks(r.Context(), playlist.Tracks)
 
 	JSON(w, http.StatusOK, playlist)
 }
@@ -222,6 +226,7 @@ func (h *Handler) SpotifySearchHandler(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.observeSpotifyTracks(r.Context(), res.Tracks)
 
 	JSON(w, http.StatusOK, res)
 }

@@ -96,9 +96,7 @@ export default function Settings() {
       </section>
       {clear && (
         <Modal title="Очистить историю?" onClose={() => setClear(false)}>
-          <p>
-            История прослушивания будет удалена из вашего аккаунта Mixora.
-          </p>
+          <p>История прослушивания будет удалена из вашего аккаунта Mixora.</p>
           <button
             className="danger"
             onClick={() => {

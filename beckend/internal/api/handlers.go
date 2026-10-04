@@ -333,13 +333,11 @@ func (h *Handler) SearchHandler(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if h.tracks != nil {
-			tracks := make([]music.Track, 0, len(res.Collection))
-			for _, raw := range res.Collection {
-				tracks = append(tracks, music.FromSoundCloud(raw))
-			}
-			_ = h.tracks.Save(r.Context(), tracks)
+		tracks := make([]music.Track, 0, len(res.Collection))
+		for _, raw := range res.Collection {
+			tracks = append(tracks, music.FromSoundCloud(raw))
 		}
+		h.observeTracks(r.Context(), tracks)
 		JSON(w, http.StatusOK, res)
 	case "users":
 		res, err := h.client.SearchUsers(r.Context(), q, opts)

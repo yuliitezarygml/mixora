@@ -4,6 +4,7 @@ import { useApp } from "../state/context.js";
 import Icon from "./Icon.jsx";
 import { IconButton } from "./Primitives.jsx";
 import AccountMenu from "./AccountMenu.jsx";
+import { entityKey } from "../lib/library.js";
 export const navigation = [
   ["Поиск", "/search", "search"],
   ["Главная", "/", "home"],
@@ -96,16 +97,22 @@ export default function Sidebar({ onCreate }) {
                 {!collapsed && <span>Мне нравится</span>}
               </Link>
               {(app.library.pins || [])
-                .map(
-                  (id) =>
-                    app.library.playlists.find((p) => p.id === id) ||
-                    app.library.savedPlaylists.find((p) => p.id === id),
-                )
+                .map((key) => {
+                  const own = app.library.playlists.find(
+                    (playlist) => entityKey(playlist, "mixora") === key,
+                  );
+                  if (own) return { playlist: own, own: true };
+                  const saved = app.library.savedPlaylists.find(
+                    (playlist) => entityKey(playlist) === key,
+                  );
+                  return saved ? { playlist: saved, own: false } : null;
+                })
                 .filter(Boolean)
-                .map((p) => (
+                .map(({ playlist, own }) => (
                   <PinnedPlaylist
-                    key={p.id}
-                    playlist={p}
+                    key={entityKey(playlist, own ? "mixora" : "soundcloud")}
+                    playlist={playlist}
+                    own={own}
                     collapsed={collapsed}
                   />
                 ))}
@@ -128,7 +135,7 @@ export default function Sidebar({ onCreate }) {
   );
 }
 
-function PinnedPlaylist({ playlist, collapsed }) {
+function PinnedPlaylist({ playlist, own, collapsed }) {
   const app = useApp();
   const [menu, setMenu] = useState(false);
   const root = useRef(null);
@@ -145,9 +152,9 @@ function PinnedPlaylist({ playlist, collapsed }) {
       <Link
         className="sidebar-pin"
         to={
-          app.library.playlists.some((item) => item.id === playlist.id)
+          own
             ? `/playlist?id=${playlist.id}`
-            : `/playlist?id=${encodeURIComponent(playlist.id)}`
+            : `/${playlist.album ? "album" : "playlist"}?id=${encodeURIComponent(playlist.id)}&source=${encodeURIComponent(playlist.source || "soundcloud")}`
         }
         title={playlist.name}
       >
@@ -175,7 +182,7 @@ function PinnedPlaylist({ playlist, collapsed }) {
           <button
             role="menuitem"
             onClick={() => {
-              app.togglePin(playlist.id);
+              app.togglePin(playlist);
               setMenu(false);
             }}
           >

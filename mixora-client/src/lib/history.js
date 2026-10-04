@@ -1,4 +1,4 @@
-import { soundcloudResourceId } from "./api.js";
+import { canonicalTrackReference } from "./api.js";
 
 const MAX_QUEUED_HISTORY_RECORDS = 500;
 const MAX_HISTORY_ENTRIES = 100;
@@ -8,6 +8,23 @@ const timestamp = () => new Date().toISOString();
 
 const text = (value) => String(value ?? "").trim();
 
+const validGeneration = (value) => {
+  const generation = Number(value);
+  return Number.isSafeInteger(generation) && generation >= 0
+    ? generation
+    : null;
+};
+
+const recordGeneration = (record) => {
+  if (!record || typeof record !== "object") return undefined;
+  // Queues written before the generation fence did not have this property.
+  // They belong to generation zero and must not be silently rebased after a
+  // later account clear.
+  if (!Object.hasOwn(record, "generation")) return 0;
+  if (record.generation === null) return null;
+  return validGeneration(record.generation);
+};
+
 const isoTimestamp = (value) => {
   const raw = typeof value === "string" ? value.trim() : "";
   if (!raw) return "";
@@ -15,35 +32,23 @@ const isoTimestamp = (value) => {
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : "";
 };
 
-// History uses the same compact, provider-neutral track snapshot as the
-// server. Keeping this conversion at the queue boundary means an offline
-// retry sends the exact same record that was shown optimistically to the user.
+// The music API adapter is the only place that knows provider ID grammar. This
+// queue receives its canonical reference so a local SoundCloud URN and the
+// compact ID returned from the API cannot become two optimistic tracks.
 export function canonicalHistoryTrack(track) {
   if (!track || typeof track !== "object") return null;
-  const source = text(track.source).toLowerCase();
-  const rawId = text(track.id);
+  const reference = canonicalTrackReference(track);
   const title = text(track.title);
   const artist = text(track.artist);
-  if (!source || !rawId || !title || !artist) return null;
-
-  let id = rawId;
-  let artistId = text(track.artistId);
-  if (source === "soundcloud") {
-    try {
-      id = soundcloudResourceId(rawId);
-      artistId = artistId ? soundcloudResourceId(artistId) : "";
-    } catch {
-      return null;
-    }
-  }
+  if (!reference || !title || !artist) return null;
 
   const duration = Number(track.duration);
   return {
-    id,
-    source,
+    id: reference.id,
+    source: reference.source,
     title,
     artist,
-    ...(artistId ? { artistId } : {}),
+    ...(reference.artistId ? { artistId: reference.artistId } : {}),
     ...(text(track.artwork) ? { artwork: text(track.artwork) } : {}),
     ...(Number.isFinite(duration) && duration >= 0 ? { duration } : {}),
     ...(track.explicit === true ? { explicit: true } : {}),
@@ -62,14 +67,21 @@ export function createHistoryRecord(track, options = {}) {
   const id = options.id || generatedId;
   const idempotencyKey = text(typeof id === "function" ? id() : id);
   const now = options.now || timestamp;
-  const occurredAt = isoTimestamp(
-    typeof now === "function" ? now() : now,
-  );
-  if (!canonicalTrack || !idempotencyKey || !occurredAt) return null;
+  const occurredAt = isoTimestamp(typeof now === "function" ? now() : now);
+  const generation =
+    options.generation === undefined ? 0 : recordGeneration(options);
+  if (
+    !canonicalTrack ||
+    !idempotencyKey ||
+    !occurredAt ||
+    generation === undefined
+  )
+    return null;
   return {
     idempotency_key: idempotencyKey,
     track: canonicalTrack,
     occurred_at: occurredAt,
+    generation,
   };
 }
 
@@ -77,11 +89,14 @@ export function normalizeHistoryRecord(record) {
   const track = canonicalHistoryTrack(record?.track);
   const idempotencyKey = text(record?.idempotency_key);
   const occurredAt = isoTimestamp(record?.occurred_at);
-  if (!track || !idempotencyKey || !occurredAt) return null;
+  const generation = recordGeneration(record);
+  if (!track || !idempotencyKey || !occurredAt || generation === undefined)
+    return null;
   return {
     idempotency_key: idempotencyKey,
     track,
     occurred_at: occurredAt,
+    generation,
   };
 }
 
@@ -89,11 +104,12 @@ export function normalizeHistoryRecord(record) {
 // cannot accidentally become part of the idempotency fingerprint on the API.
 export function historyRequest(record) {
   const normalized = normalizeHistoryRecord(record);
-  if (!normalized) return null;
+  if (!normalized || normalized.generation === null) return null;
   return {
     idempotency_key: normalized.idempotency_key,
     track: normalized.track,
     occurred_at: normalized.occurred_at,
+    generation: normalized.generation,
   };
 }
 
@@ -150,14 +166,28 @@ export function acknowledgeHistoryRecords(queue, delivered) {
   const ids = new Set(
     (Array.isArray(delivered) ? delivered : [])
       .map((item) =>
-        typeof item === "string"
-          ? text(item)
-          : text(item?.idempotency_key),
+        typeof item === "string" ? text(item) : text(item?.idempotency_key),
       )
       .filter(Boolean),
   );
   return normalizedQueue(queue)
     .filter((record) => !ids.has(record.idempotency_key))
+    .slice(-MAX_QUEUED_HISTORY_RECORDS);
+}
+
+// Records created before the first GET in this browser session are marked
+// null, then attached to the generation returned by that GET. In contrast,
+// an old persisted record with a concrete generation is discarded if a clear
+// happened since it was written; rebasing it would undo the user's clear.
+export function bindHistoryGeneration(queue, generation) {
+  const currentGeneration = validGeneration(generation);
+  if (currentGeneration === null) return normalizedQueue(queue);
+  return normalizedQueue(queue)
+    .flatMap((record) => {
+      if (record.generation === null)
+        return [{ ...record, generation: currentGeneration }];
+      return record.generation === currentGeneration ? [record] : [];
+    })
     .slice(-MAX_QUEUED_HISTORY_RECORDS);
 }
 
@@ -192,13 +222,22 @@ export function historyEntries(payload) {
   return entries.map(normalizeHistoryEntry).filter(Boolean);
 }
 
+export function historySnapshot(payload) {
+  return {
+    generation: validGeneration(payload?.generation) ?? 0,
+    entries: historyEntries(payload),
+  };
+}
+
 const entryTime = (entry) => Date.parse(entry.last_listened_at) || 0;
 
 const sortHistoryEntries = (entries) =>
   entries.sort((first, second) => {
     const difference = entryTime(second) - entryTime(first);
     if (difference) return difference;
-    return historyTrackKey(first.track).localeCompare(historyTrackKey(second.track));
+    return historyTrackKey(first.track).localeCompare(
+      historyTrackKey(second.track),
+    );
   });
 
 // Combine full server entries without inflating their play counters. This is
@@ -228,7 +267,10 @@ export function mergeHistoryEntries(...groups) {
       });
     }
   }
-  return sortHistoryEntries([...entries.values()]).slice(0, MAX_HISTORY_ENTRIES);
+  return sortHistoryEntries([...entries.values()]).slice(
+    0,
+    MAX_HISTORY_ENTRIES,
+  );
 }
 
 const entryFromRecord = (record) => {

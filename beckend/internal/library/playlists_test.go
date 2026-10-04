@@ -7,12 +7,15 @@ import (
 	"github.com/iulian/soundcloud-go/internal/music"
 )
 
+func playlistRevision(value int64) *int64 { return &value }
+
 func TestNormalizePlaylistInputCanonicalizesTracksAndRejectsDuplicates(t *testing.T) {
 	input, err := NormalizePlaylistInput(PlaylistInput{
-		IdempotencyKey: " playlist-write-1 ",
-		Name:           " В дороге ",
-		Description:    " Любимая музыка ",
-		Pinned:         true,
+		IdempotencyKey:   " playlist-write-1 ",
+		ExpectedRevision: playlistRevision(0),
+		Name:             " В дороге ",
+		Description:      " Любимая музыка ",
+		Pinned:           true,
 		Tracks: []music.Track{{
 			Source: " SoundCloud ", ID: "soundcloud:tracks:42", Title: " Track ", Artist: " Artist ",
 		}},
@@ -25,7 +28,7 @@ func TestNormalizePlaylistInputCanonicalizesTracksAndRejectsDuplicates(t *testin
 	}
 
 	_, err = NormalizePlaylistInput(PlaylistInput{
-		IdempotencyKey: "playlist-write-2", Name: "Duplicates",
+		IdempotencyKey: "playlist-write-2", ExpectedRevision: playlistRevision(0), Name: "Duplicates",
 		Tracks: []music.Track{
 			{Source: "soundcloud", ID: "42", Title: "Track", Artist: "Artist"},
 			{Source: "soundcloud", ID: "soundcloud:tracks:42", Title: "Track", Artist: "Artist"},
@@ -38,7 +41,7 @@ func TestNormalizePlaylistInputCanonicalizesTracksAndRejectsDuplicates(t *testin
 
 func TestPlaylistRequestFingerprintIncludesOrderAndAddress(t *testing.T) {
 	input, err := NormalizePlaylistInput(PlaylistInput{
-		IdempotencyKey: "playlist-write", Name: "Order",
+		IdempotencyKey: "playlist-write", ExpectedRevision: playlistRevision(0), Name: "Order",
 		Tracks: []music.Track{
 			{Source: "music", ID: "one", Title: "One", Artist: "Artist"},
 			{Source: "music", ID: "two", Title: "Two", Artist: "Artist"},
@@ -54,8 +57,27 @@ func TestPlaylistRequestFingerprintIncludesOrderAndAddress(t *testing.T) {
 	if bytes.Equal(first, reordered) || bytes.Equal(reordered, otherID) {
 		t.Fatalf("playlist fingerprints did not distinguish mutation: first=%x reorder=%x other=%x", first, reordered, otherID)
 	}
-	if bytes.Equal(PlaylistDeleteRequestFingerprint("123e4567-e89b-12d3-a456-426614174000"), first) {
+	deleteInput, err := NormalizePlaylistDeleteInput(PlaylistDeleteInput{
+		IdempotencyKey: "playlist-delete", ExpectedRevision: playlistRevision(1),
+	})
+	if err != nil {
+		t.Fatalf("NormalizePlaylistDeleteInput() error = %v", err)
+	}
+	if bytes.Equal(PlaylistDeleteRequestFingerprint("123e4567-e89b-12d3-a456-426614174000", deleteInput), first) {
 		t.Fatal("delete and replace fingerprint collided")
+	}
+	input.ExpectedRevision = playlistRevision(1)
+	if bytes.Equal(first, PlaylistRequestFingerprint("123e4567-e89b-12d3-a456-426614174000", input)) {
+		t.Fatal("expected revision did not change fingerprint")
+	}
+}
+
+func TestPlaylistFingerprintsDoNotPanicBeforeValidation(t *testing.T) {
+	playlistID := "123e4567-e89b-12d3-a456-426614174000"
+	replace := PlaylistRequestFingerprint(playlistID, PlaylistInput{Name: "Unvalidated"})
+	delete := PlaylistDeleteRequestFingerprint(playlistID, PlaylistDeleteInput{})
+	if bytes.Equal(replace, delete) {
+		t.Fatal("unvalidated replace and delete fingerprints collided")
 	}
 }
 

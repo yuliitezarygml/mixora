@@ -18,13 +18,17 @@ import (
 const (
 	maxPlaylistName        = 120
 	maxPlaylistDescription = 2000
+	maxPlaylistLegacyID    = 120
 	maxPlaylistTracks      = 500
+	maxPlaylistsPerAccount = 50
 )
 
 var (
 	playlistIDPattern              = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	ErrPlaylistNotFound            = errors.New("playlist was not found")
 	ErrPlaylistIdempotencyConflict = errors.New("playlist idempotency key has already been used for a different mutation")
+	ErrPlaylistRevisionConflict    = errors.New("playlist was changed on another device")
+	ErrPlaylistLimitReached        = errors.New("playlist limit reached for this account")
 	ErrPlaylistStoreNoDatabase     = errors.New("playlist store requires a database")
 )
 
@@ -33,6 +37,7 @@ var (
 // metadata and playback URLs.
 type Playlist struct {
 	ID          string          `json:"id"`
+	LegacyID    string          `json:"legacy_id,omitempty"`
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Tracks      []TrackSnapshot `json:"tracks"`
@@ -47,16 +52,21 @@ type Playlist struct {
 // ordered list makes retrying an offline drag, add, or removal deterministic;
 // it does not turn the old library JSON snapshot back into the authority.
 type PlaylistInput struct {
-	IdempotencyKey string        `json:"idempotency_key"`
-	Name           string        `json:"name"`
-	Description    string        `json:"description"`
-	Tracks         []music.Track `json:"tracks"`
-	Pinned         bool          `json:"pinned"`
-	Liked          bool          `json:"liked"`
+	IdempotencyKey   string `json:"idempotency_key"`
+	ExpectedRevision *int64 `json:"expected_revision"`
+	// LegacyID is accepted only for a first-write browser snapshot backfill.
+	// It is never mutable after the normalized playlist exists.
+	LegacyID    string        `json:"legacy_id,omitempty"`
+	Name        string        `json:"name"`
+	Description string        `json:"description"`
+	Tracks      []music.Track `json:"tracks"`
+	Pinned      bool          `json:"pinned"`
+	Liked       bool          `json:"liked"`
 }
 
 type PlaylistDeleteInput struct {
-	IdempotencyKey string `json:"idempotency_key"`
+	IdempotencyKey   string `json:"idempotency_key"`
+	ExpectedRevision *int64 `json:"expected_revision"`
 }
 
 type PlaylistDeleteResult struct {
@@ -69,7 +79,20 @@ func NormalizePlaylistDeleteInput(input PlaylistDeleteInput) (PlaylistDeleteInpu
 	if err := validatePreferenceText("idempotency key", input.IdempotencyKey, maxPreferenceIdempotencyKey, true); err != nil {
 		return PlaylistDeleteInput{}, err
 	}
+	if err := normalizePlaylistExpectedRevision(input.ExpectedRevision); err != nil {
+		return PlaylistDeleteInput{}, err
+	}
 	return input, nil
+}
+
+func normalizePlaylistExpectedRevision(value *int64) error {
+	if value == nil {
+		return errors.New("expected_revision is required")
+	}
+	if *value < 0 {
+		return errors.New("expected_revision must not be negative")
+	}
+	return nil
 }
 
 // NormalizePlaylistID restricts client-generated identifiers to canonical
@@ -89,6 +112,16 @@ func NormalizePlaylistInput(input PlaylistInput) (PlaylistInput, error) {
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	if err := validatePreferenceText("idempotency key", input.IdempotencyKey, maxPreferenceIdempotencyKey, true); err != nil {
 		return PlaylistInput{}, err
+	}
+	if err := normalizePlaylistExpectedRevision(input.ExpectedRevision); err != nil {
+		return PlaylistInput{}, err
+	}
+	input.LegacyID = strings.TrimSpace(input.LegacyID)
+	if err := validatePreferenceText("legacy playlist id", input.LegacyID, maxPlaylistLegacyID, false); err != nil {
+		return PlaylistInput{}, err
+	}
+	if input.LegacyID != "" && *input.ExpectedRevision != 0 {
+		return PlaylistInput{}, errors.New("legacy_id may only be used when creating a playlist")
 	}
 	input.Name = strings.TrimSpace(input.Name)
 	if err := validatePreferenceText("playlist name", input.Name, maxPlaylistName, true); err != nil {
@@ -124,34 +157,52 @@ func NormalizePlaylistInput(input PlaylistInput) (PlaylistInput, error) {
 // edit is rejected rather than silently changing a listener's playlist.
 func PlaylistRequestFingerprint(playlistID string, input PlaylistInput) []byte {
 	snapshots := playlistSnapshots(input.Tracks)
+	expectedRevision := fingerprintPlaylistRevision(input.ExpectedRevision)
 	body, _ := json.Marshal(struct {
-		Operation   string          `json:"operation"`
-		PlaylistID  string          `json:"playlist_id"`
-		Name        string          `json:"name"`
-		Description string          `json:"description"`
-		Tracks      []TrackSnapshot `json:"tracks"`
-		Pinned      bool            `json:"pinned"`
-		Liked       bool            `json:"liked"`
+		Operation        string          `json:"operation"`
+		PlaylistID       string          `json:"playlist_id"`
+		ExpectedRevision int64           `json:"expected_revision"`
+		LegacyID         string          `json:"legacy_id"`
+		Name             string          `json:"name"`
+		Description      string          `json:"description"`
+		Tracks           []TrackSnapshot `json:"tracks"`
+		Pinned           bool            `json:"pinned"`
+		Liked            bool            `json:"liked"`
 	}{
-		Operation:   "replace",
-		PlaylistID:  playlistID,
-		Name:        input.Name,
-		Description: input.Description,
-		Tracks:      snapshots,
-		Pinned:      input.Pinned,
-		Liked:       input.Liked,
+		Operation:        "replace",
+		PlaylistID:       playlistID,
+		ExpectedRevision: expectedRevision,
+		LegacyID:         input.LegacyID,
+		Name:             input.Name,
+		Description:      input.Description,
+		Tracks:           snapshots,
+		Pinned:           input.Pinned,
+		Liked:            input.Liked,
 	})
 	sum := sha256.Sum256(body)
 	return append([]byte(nil), sum[:]...)
 }
 
-func PlaylistDeleteRequestFingerprint(playlistID string) []byte {
+func PlaylistDeleteRequestFingerprint(playlistID string, input PlaylistDeleteInput) []byte {
+	expectedRevision := fingerprintPlaylistRevision(input.ExpectedRevision)
 	body, _ := json.Marshal(struct {
-		Operation  string `json:"operation"`
-		PlaylistID string `json:"playlist_id"`
-	}{Operation: "delete", PlaylistID: playlistID})
+		Operation        string `json:"operation"`
+		PlaylistID       string `json:"playlist_id"`
+		ExpectedRevision int64  `json:"expected_revision"`
+	}{Operation: "delete", PlaylistID: playlistID, ExpectedRevision: expectedRevision})
 	sum := sha256.Sum256(body)
 	return append([]byte(nil), sum[:]...)
+}
+
+// Public fingerprint helpers are also used by contract-test fixtures. The
+// transport rejects a missing revision before reaching the store, but a stable
+// sentinel keeps an accidental direct caller from panicking while preserving a
+// distinct fingerprint for invalid input.
+func fingerprintPlaylistRevision(value *int64) int64 {
+	if value == nil {
+		return -1
+	}
+	return *value
 }
 
 // ReplacePlaylist atomically creates or replaces an account playlist and its
@@ -182,6 +233,7 @@ func (s *Store) ReplacePlaylist(ctx context.Context, userID, playlistID string, 
 	}
 	defer tx.Rollback(ctx)
 	for _, lockKey := range []string{
+		playlistLockKey("user", userID),
 		playlistLockKey("idempotency", userID, normalized.IdempotencyKey),
 		playlistLockKey("playlist", userID, playlistID),
 	} {
@@ -209,7 +261,30 @@ func (s *Store) ReplacePlaylist(ctx context.Context, userID, playlistID string, 
 	}
 	var result Playlist
 	if !found {
-		result, err = insertPlaylist(ctx, tx, userID, playlistID, normalized, snapshots)
+		if *normalized.ExpectedRevision != 0 {
+			return Playlist{}, ErrPlaylistRevisionConflict
+		}
+		if normalized.LegacyID != "" {
+			legacy, legacyFound, err := loadPlaylistByLegacyID(ctx, tx, userID, normalized.LegacyID, true)
+			if err != nil {
+				return Playlist{}, err
+			}
+			if legacyFound {
+				result = legacy
+			}
+		}
+		if result.ID == "" {
+			count, err := playlistCount(ctx, tx, userID)
+			if err != nil {
+				return Playlist{}, err
+			}
+			if count >= maxPlaylistsPerAccount {
+				return Playlist{}, ErrPlaylistLimitReached
+			}
+			result, err = insertPlaylist(ctx, tx, userID, playlistID, normalized, snapshots)
+		}
+	} else if *normalized.ExpectedRevision != current.Revision {
+		return Playlist{}, ErrPlaylistRevisionConflict
 	} else if playlistContentEqual(current, normalized, snapshots) {
 		result = current
 	} else {
@@ -249,13 +324,14 @@ func (s *Store) DeletePlaylist(ctx context.Context, userID, playlistID string, i
 	if err != nil {
 		return PlaylistDeleteResult{}, err
 	}
-	requestHash := PlaylistDeleteRequestFingerprint(playlistID)
+	requestHash := PlaylistDeleteRequestFingerprint(playlistID, input)
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return PlaylistDeleteResult{}, fmt.Errorf("begin playlist deletion: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	for _, lockKey := range []string{
+		playlistLockKey("user", userID),
 		playlistLockKey("idempotency", userID, input.IdempotencyKey),
 		playlistLockKey("playlist", userID, playlistID),
 	} {
@@ -276,8 +352,20 @@ func (s *Store) DeletePlaylist(ctx context.Context, userID, playlistID string, i
 		return result, nil
 	}
 
-	if _, err := tx.Exec(ctx, `DELETE FROM user_playlists WHERE id=$1 AND user_id=$2`, playlistID, userID); err != nil {
-		return PlaylistDeleteResult{}, fmt.Errorf("delete playlist: %w", err)
+	current, found, err := loadPlaylist(ctx, tx, userID, playlistID, true)
+	if err != nil {
+		return PlaylistDeleteResult{}, err
+	}
+	if found && *input.ExpectedRevision != current.Revision {
+		return PlaylistDeleteResult{}, ErrPlaylistRevisionConflict
+	}
+	if !found && *input.ExpectedRevision != 0 {
+		return PlaylistDeleteResult{}, ErrPlaylistRevisionConflict
+	}
+	if found {
+		if _, err := tx.Exec(ctx, `DELETE FROM user_playlists WHERE id=$1 AND user_id=$2`, playlistID, userID); err != nil {
+			return PlaylistDeleteResult{}, fmt.Errorf("delete playlist: %w", err)
+		}
 	}
 	result := PlaylistDeleteResult{ID: playlistID, Deleted: true}
 	encoded, err := json.Marshal(result)
@@ -302,32 +390,73 @@ func (s *Store) ListPlaylists(ctx context.Context, userID string) ([]Playlist, e
 		return nil, err
 	}
 	rows, err := s.db.Query(ctx, `
-		SELECT id::text
+		SELECT id::text, COALESCE(legacy_id, ''), name, description,
+			pinned, liked, revision, created_at, updated_at
 		FROM user_playlists
 		WHERE user_id=$1
 		ORDER BY updated_at DESC, id
-		LIMIT 50
-	`, userID)
+		LIMIT $2
+	`, userID, maxPlaylistsPerAccount)
 	if err != nil {
 		return nil, fmt.Errorf("list playlists: %w", err)
 	}
 	defer rows.Close()
-	playlists := make([]Playlist, 0)
+	playlists := make([]Playlist, 0, maxPlaylistsPerAccount)
+	positions := make(map[string]int, maxPlaylistsPerAccount)
+	ids := make([]string, 0, maxPlaylistsPerAccount)
 	for rows.Next() {
-		var playlistID string
-		if err := rows.Scan(&playlistID); err != nil {
-			return nil, fmt.Errorf("scan playlist id: %w", err)
+		var playlist Playlist
+		if err := rows.Scan(
+			&playlist.ID, &playlist.LegacyID, &playlist.Name,
+			&playlist.Description, &playlist.Pinned, &playlist.Liked,
+			&playlist.Revision, &playlist.CreatedAt, &playlist.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan playlist summary: %w", err)
 		}
-		playlist, found, err := loadPlaylist(ctx, s.db, userID, playlistID, false)
-		if err != nil {
-			return nil, err
-		}
-		if found {
-			playlists = append(playlists, playlist)
-		}
+		playlist.Tracks = make([]TrackSnapshot, 0)
+		positions[playlist.ID] = len(playlists)
+		ids = append(ids, playlist.ID)
+		playlists = append(playlists, playlist)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate playlists: %w", err)
+	}
+	// Close the summary cursor before loading entries. This keeps the endpoint
+	// at two queries total rather than holding a pool connection while issuing
+	// one detail query per playlist.
+	rows.Close()
+	if len(ids) == 0 {
+		return playlists, nil
+	}
+
+	trackRows, err := s.db.Query(ctx, `
+		SELECT playlist_id::text, track_snapshot
+		FROM user_playlist_tracks
+		WHERE playlist_id = ANY($1::uuid[])
+		ORDER BY playlist_id, position
+	`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list playlist tracks: %w", err)
+	}
+	defer trackRows.Close()
+	for trackRows.Next() {
+		var playlistID string
+		var raw []byte
+		if err := trackRows.Scan(&playlistID, &raw); err != nil {
+			return nil, fmt.Errorf("scan playlist track: %w", err)
+		}
+		snapshot, err := decodeTrackSnapshot(raw)
+		if err != nil {
+			return nil, fmt.Errorf("decode playlist track: %w", err)
+		}
+		index, found := positions[playlistID]
+		if !found {
+			return nil, fmt.Errorf("playlist track %s was not requested", playlistID)
+		}
+		playlists[index].Tracks = append(playlists[index].Tracks, snapshot)
+	}
+	if err := trackRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate playlist tracks: %w", err)
 	}
 	return playlists, nil
 }
@@ -361,7 +490,7 @@ type playlistQueryer interface {
 
 func loadPlaylist(ctx context.Context, q playlistQueryer, userID, playlistID string, lock bool) (Playlist, bool, error) {
 	query := `
-		SELECT id::text, name, description, pinned, liked, revision, created_at, updated_at
+		SELECT id::text, COALESCE(legacy_id, ''), name, description, pinned, liked, revision, created_at, updated_at
 		FROM user_playlists
 		WHERE id=$1 AND user_id=$2
 	`
@@ -370,7 +499,7 @@ func loadPlaylist(ctx context.Context, q playlistQueryer, userID, playlistID str
 	}
 	var playlist Playlist
 	err := q.QueryRow(ctx, query, playlistID, userID).Scan(
-		&playlist.ID, &playlist.Name, &playlist.Description, &playlist.Pinned,
+		&playlist.ID, &playlist.LegacyID, &playlist.Name, &playlist.Description, &playlist.Pinned,
 		&playlist.Liked, &playlist.Revision, &playlist.CreatedAt, &playlist.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -407,14 +536,42 @@ func loadPlaylist(ctx context.Context, q playlistQueryer, userID, playlistID str
 	return playlist, true, nil
 }
 
+func loadPlaylistByLegacyID(ctx context.Context, q playlistQueryer, userID, legacyID string, lock bool) (Playlist, bool, error) {
+	query := `
+		SELECT id::text
+		FROM user_playlists
+		WHERE user_id=$1 AND legacy_id=$2
+	`
+	if lock {
+		query += " FOR UPDATE"
+	}
+	var playlistID string
+	err := q.QueryRow(ctx, query, userID, legacyID).Scan(&playlistID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Playlist{}, false, nil
+	}
+	if err != nil {
+		return Playlist{}, false, fmt.Errorf("load legacy playlist: %w", err)
+	}
+	return loadPlaylist(ctx, q, userID, playlistID, false)
+}
+
+func playlistCount(ctx context.Context, q playlistQueryer, userID string) (int, error) {
+	var count int
+	if err := q.QueryRow(ctx, `SELECT count(*) FROM user_playlists WHERE user_id=$1`, userID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count account playlists: %w", err)
+	}
+	return count, nil
+}
+
 func insertPlaylist(ctx context.Context, tx pgx.Tx, userID, playlistID string, input PlaylistInput, snapshots []TrackSnapshot) (Playlist, error) {
 	var playlist Playlist
 	err := tx.QueryRow(ctx, `
-		INSERT INTO user_playlists(id, user_id, name, description, pinned, liked)
-		VALUES ($1,$2,$3,$4,$5,$6)
-		RETURNING id::text, revision, created_at, updated_at
-	`, playlistID, userID, input.Name, input.Description, input.Pinned, input.Liked).Scan(
-		&playlist.ID, &playlist.Revision, &playlist.CreatedAt, &playlist.UpdatedAt,
+		INSERT INTO user_playlists(id, user_id, legacy_id, name, description, pinned, liked)
+		VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7)
+		RETURNING id::text, COALESCE(legacy_id, ''), revision, created_at, updated_at
+	`, playlistID, userID, input.LegacyID, input.Name, input.Description, input.Pinned, input.Liked).Scan(
+		&playlist.ID, &playlist.LegacyID, &playlist.Revision, &playlist.CreatedAt, &playlist.UpdatedAt,
 	)
 	if err != nil {
 		return Playlist{}, fmt.Errorf("create playlist: %w", err)
@@ -441,9 +598,9 @@ func replacePlaylistContent(ctx context.Context, tx pgx.Tx, current Playlist, in
 			revision=revision + 1,
 			updated_at=now()
 		WHERE id=$1
-		RETURNING id::text, revision, created_at, updated_at
+		RETURNING id::text, COALESCE(legacy_id, ''), revision, created_at, updated_at
 	`, current.ID, input.Name, input.Description, input.Pinned, input.Liked).Scan(
-		&playlist.ID, &playlist.Revision, &playlist.CreatedAt, &playlist.UpdatedAt,
+		&playlist.ID, &playlist.LegacyID, &playlist.Revision, &playlist.CreatedAt, &playlist.UpdatedAt,
 	)
 	if err != nil {
 		return Playlist{}, fmt.Errorf("update playlist: %w", err)

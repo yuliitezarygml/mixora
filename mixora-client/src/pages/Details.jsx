@@ -7,11 +7,16 @@ import {
 } from "react-router-dom";
 import { useApp } from "../state/context.js";
 import {
+  api,
   catalogResource,
   collectionItems,
   soundcloudArtist,
   soundcloudPlaylist,
   soundcloudTrack,
+  sourceLabel,
+  spotifyArtist,
+  spotifyPlaylist,
+  spotifyTrack,
 } from "../lib/api.js";
 import { useRemote } from "../lib/useRemote.js";
 import { duration, uniqueTracks, shuffleTracks } from "../lib/library.js";
@@ -55,11 +60,40 @@ export default function Details() {
   const isPlaylist = pathname.includes("playlist"),
     isAlbum = !artist && !label && !trackPage && !isPlaylist;
   const id = params.get("id") || (artist ? app.catalog[0]?.artistId : "");
+  const source = params.get("source") || "soundcloud";
   const personal = app.library.playlists.find((p) => p.id === id);
-  const cachedTrack = app.catalog.find((t) => t.id === id);
+  const cachedTrack = app.catalog.find(
+    (track) => track.id === id && track.source === source,
+  );
   const remote = useRemote(
-    `${app.user?.id}:entity:${artist || label ? "users" : trackPage ? "tracks" : "playlists"}:${id}`,
+    `${app.user?.id}:entity:${source}:${artist || label ? "users" : trackPage ? "tracks" : "playlists"}:${id}`,
     async (signal) => {
+      if (source === "spotify") {
+        if (artist || label) {
+          const profile = await api(
+            `/spotify/artists/${encodeURIComponent(id)}`,
+            { signal },
+          );
+          return {
+            ...spotifyArtist(profile),
+            description: (profile?.genres || []).join(", "),
+            tracks: (profile?.top_tracks || []).map(spotifyTrack),
+            playlists: [],
+          };
+        }
+        if (trackPage) {
+          return spotifyTrack(
+            await api(`/spotify/tracks/${encodeURIComponent(id)}`, { signal }),
+          );
+        }
+        const resource = isAlbum ? "albums" : "playlists";
+        return spotifyPlaylist(
+          await api(`/spotify/${resource}/${encodeURIComponent(id)}`, {
+            signal,
+          }),
+          { album: isAlbum },
+        );
+      }
       if (artist || label) {
         const [profile, tracks, playlists] = await Promise.all([
           catalogResource("users", id, "", signal),
@@ -78,9 +112,17 @@ export default function Details() {
         await catalogResource("playlists", id, "", signal),
       );
     },
-    !!app.user && !!id && !personal && cachedTrack?.source !== "local",
+    !!app.user &&
+      !!id &&
+      !personal &&
+      ((source === "soundcloud" && cachedTrack?.source !== "local") ||
+        source === "spotify"),
   );
-  const localArtistTracks = app.catalog.filter((t) => t.artistId === id);
+  const localArtistTracks = app.catalog.filter(
+    (track) =>
+      track.source === source &&
+      (track.artistId === id || (!track.artistId && track.artist === id)),
+  );
   const localEntity =
     artist || label
       ? {
@@ -115,20 +157,29 @@ export default function Details() {
   const known = uniqueTracks([
     ...app.library.likes,
     ...app.library.history,
-  ]).filter((t) => t.artistId === id);
+  ]).filter((track) => track.source === source && track.artistId === id);
   const allArtists = [
     ...new Map(
       app.catalog
         .filter((t) => t.artistId !== id)
         .map((t) => [
-          t.artistId,
-          { id: t.artistId, name: t.artist, artwork: t.artwork },
+          `${t.source}:${t.artistId || t.artist}`,
+          {
+            id: t.artistId || t.artist,
+            source: t.source,
+            name: t.artist,
+            artwork: t.artwork,
+          },
         ]),
     ).values(),
   ];
   const savedField = isAlbum ? "albums" : "savedPlaylists";
-  const saved = app.library[savedField].some((x) => x.id === id);
-  const followed = app.library.artists.some((x) => x.id === id);
+  const saved = app.library[savedField].some(
+    (x) => x.id === id && (x.source || "soundcloud") === source,
+  );
+  const followed = app.library.artists.some(
+    (x) => x.id === id && (x.source || "soundcloud") === source,
+  );
   let displayTracks = (sub === "familiar" ? known : tracks).filter((t) =>
     (t.title + " " + t.artist).toLowerCase().includes(filter.toLowerCase()),
   );
@@ -177,7 +228,7 @@ export default function Details() {
             {title}
           </h1>
           <p className="muted">
-            {entity.artist || app.user?.display_name || "SoundCloud"}
+            {entity.artist || app.user?.display_name || sourceLabel(source)}
             {tracks.length
               ? ` · ${tracks.length} треков · ${duration(tracks.reduce((sum, t) => sum + (t.duration || 0), 0))}`
               : ""}
@@ -223,6 +274,7 @@ export default function Details() {
                 onClick={() =>
                   app.toggleSaved("artists", {
                     id,
+                    source,
                     name: title,
                     artwork: entity.artwork,
                   })
@@ -287,7 +339,7 @@ export default function Details() {
           <Tabs
             items={tabs.map(([text, suffix]) => ({
               label: text,
-              to: `${route}${suffix}?id=${encodeURIComponent(id || "")}`,
+              to: `${route}${suffix}?id=${encodeURIComponent(id || "")}&source=${encodeURIComponent(source)}`,
               active: pathname === route + suffix,
             }))}
           />
@@ -332,8 +384,13 @@ export default function Details() {
               items={[
                 ...new Map(
                   tracks.map((t) => [
-                    t.artistId,
-                    { id: t.artistId, name: t.artist, artwork: t.artwork },
+                    `${t.source}:${t.artistId || t.artist}`,
+                    {
+                      id: t.artistId || t.artist,
+                      source: t.source,
+                      name: t.artist,
+                      artwork: t.artwork,
+                    },
                   ]),
                 ).values(),
               ]}
@@ -342,7 +399,7 @@ export default function Details() {
             <Empty
               icon={sub === "videos" ? "clip_xl" : "ticket_m"}
               title={sub === "videos" ? "Клипы" : "Концерты"}
-              text="SoundCloud не предоставляет эти данные. На странице источника может быть больше информации."
+              text={`${sourceLabel(source)} не предоставляет эти данные в Mixora. На странице источника может быть больше информации.`}
               action={
                 entity.permalink && (
                   <a

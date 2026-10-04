@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -195,6 +196,7 @@ func TestAppAPIContract(t *testing.T) {
 		input := map[string]any{
 			"idempotency_key": "history-1",
 			"occurred_at":     "2026-10-03T12:00:00Z",
+			"generation":      0,
 			"track": map[string]any{
 				"source": "soundcloud", "id": "soundcloud:tracks:99",
 				"title": "History track", "artist": "History artist",
@@ -218,11 +220,9 @@ func TestAppAPIContract(t *testing.T) {
 
 		response = request(t, client, http.MethodGet, server.URL+"/api/v1/history?limit=1", nil)
 		assertStatus(t, response, http.StatusOK)
-		var listed struct {
-			History []library.HistoryEntry `json:"history"`
-		}
+		var listed library.HistorySnapshot
 		decodeResponse(t, response, &listed)
-		if len(listed.History) != 1 || listed.History[0].Track.ID != "99" {
+		if listed.Generation != 0 || len(listed.History) != 1 || listed.History[0].Track.ID != "99" {
 			t.Fatalf("history list = %#v", listed.History)
 		}
 
@@ -243,24 +243,54 @@ func TestAppAPIContract(t *testing.T) {
 		closeResponse(t, response)
 
 		response = request(t, client, http.MethodDelete, server.URL+"/api/v1/me/history", nil)
-		assertStatus(t, response, http.StatusNoContent)
-		closeResponse(t, response)
+		assertStatus(t, response, http.StatusOK)
+		var cleared struct {
+			Generation int64 `json:"generation"`
+		}
+		decodeResponse(t, response, &cleared)
+		if cleared.Generation != 1 {
+			t.Fatalf("clear history generation = %d, want 1", cleared.Generation)
+		}
+
+		stale := map[string]any{
+			"idempotency_key": "history-before-clear",
+			"occurred_at":     "2026-10-03T12:02:00Z",
+			"generation":      0,
+			"track":           input["track"],
+		}
+		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/history", stale)
+		assertStatus(t, response, http.StatusConflict)
+		decodeResponse(t, response, &body)
+		if body.Error.Code != "history_generation_conflict" {
+			t.Fatalf("stale history code = %q", body.Error.Code)
+		}
 
 		response = request(t, client, http.MethodGet, server.URL+"/api/v1/history", nil)
 		assertStatus(t, response, http.StatusOK)
 		decodeResponse(t, response, &listed)
-		if len(listed.History) != 0 {
+		if listed.Generation != 1 || len(listed.History) != 0 {
 			t.Fatalf("history after clear = %#v", listed.History)
 		}
+
+		fresh := map[string]any{
+			"idempotency_key": "history-after-clear",
+			"occurred_at":     "2026-10-03T12:03:00Z",
+			"generation":      1,
+			"track":           input["track"],
+		}
+		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/history", fresh)
+		assertStatus(t, response, http.StatusOK)
+		closeResponse(t, response)
 	})
 
 	t.Run("account playlists retain ordered tracks and idempotent writes", func(t *testing.T) {
 		playlistID := "123e4567-e89b-12d3-a456-426614174000"
 		input := map[string]any{
-			"idempotency_key": "playlist-write-1",
-			"name":            "В дороге",
-			"description":     "Музыка для поездки",
-			"pinned":          true,
+			"idempotency_key":   "playlist-write-1",
+			"expected_revision": 0,
+			"name":              "В дороге",
+			"description":       "Музыка для поездки",
+			"pinned":            true,
 			"tracks": []any{
 				map[string]any{"source": "soundcloud", "id": "soundcloud:tracks:42", "title": "First", "artist": "Artist"},
 				map[string]any{"source": "music", "id": "second", "title": "Second", "artist": "Artist"},
@@ -294,7 +324,8 @@ func TestAppAPIContract(t *testing.T) {
 
 		changed := map[string]any{
 			"idempotency_key": "playlist-write-2", "name": input["name"],
-			"description": input["description"], "pinned": true,
+			"expected_revision": 1,
+			"description":       input["description"], "pinned": true,
 			"tracks": []any{input["tracks"].([]any)[1], input["tracks"].([]any)[0]},
 		}
 		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/playlists/"+playlistID, changed)
@@ -307,7 +338,8 @@ func TestAppAPIContract(t *testing.T) {
 
 		conflicting := map[string]any{
 			"idempotency_key": "playlist-write-1", "name": changed["name"],
-			"description": changed["description"], "pinned": true,
+			"expected_revision": 1,
+			"description":       changed["description"], "pinned": true,
 			"tracks": changed["tracks"],
 		}
 		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/playlists/"+playlistID, conflicting)
@@ -318,7 +350,20 @@ func TestAppAPIContract(t *testing.T) {
 			t.Fatalf("playlist conflict = %#v", conflict)
 		}
 
-		deleteInput := map[string]any{"idempotency_key": "playlist-delete-1"}
+		stale := map[string]any{
+			"idempotency_key": "playlist-stale", "name": changed["name"],
+			"expected_revision": 1,
+			"description":       changed["description"], "pinned": true,
+			"tracks": changed["tracks"],
+		}
+		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/playlists/"+playlistID, stale)
+		assertStatus(t, response, http.StatusConflict)
+		decodeResponse(t, response, &conflict)
+		if conflict.Error.Code != "playlist_revision_conflict" {
+			t.Fatalf("playlist revision conflict = %#v", conflict)
+		}
+
+		deleteInput := map[string]any{"idempotency_key": "playlist-delete-1", "expected_revision": 2}
 		response = requestJSON(t, client, http.MethodDelete, server.URL+"/api/v1/me/playlists/"+playlistID, deleteInput)
 		assertStatus(t, response, http.StatusOK)
 		var deleted library.PlaylistDeleteResult
@@ -329,6 +374,49 @@ func TestAppAPIContract(t *testing.T) {
 		response = requestJSON(t, client, http.MethodDelete, server.URL+"/api/v1/me/playlists/"+playlistID, deleteInput)
 		assertStatus(t, response, http.StatusOK)
 		closeResponse(t, response)
+
+		legacyFirstID := "123e4567-e89b-12d3-a456-426614174010"
+		legacySecondID := "123e4567-e89b-12d3-a456-426614174011"
+		legacyInput := map[string]any{
+			"idempotency_key":   "playlist-legacy-1",
+			"expected_revision": 0,
+			"legacy_id":         "browser-only-playlist",
+			"name":              "Из старого браузера",
+			"tracks":            []any{},
+		}
+		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/playlists/"+legacyFirstID, legacyInput)
+		assertStatus(t, response, http.StatusOK)
+		var legacyFirst library.Playlist
+		decodeResponse(t, response, &legacyFirst)
+		if legacyFirst.ID != legacyFirstID || legacyFirst.LegacyID != "browser-only-playlist" {
+			t.Fatalf("first legacy backfill = %#v", legacyFirst)
+		}
+
+		legacyInput["idempotency_key"] = "playlist-legacy-2"
+		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/playlists/"+legacySecondID, legacyInput)
+		assertStatus(t, response, http.StatusOK)
+		var legacyReplay library.Playlist
+		decodeResponse(t, response, &legacyReplay)
+		if legacyReplay.ID != legacyFirstID || legacyReplay.LegacyID != "browser-only-playlist" {
+			t.Fatalf("deduplicated legacy backfill = %#v", legacyReplay)
+		}
+
+		for len(fixture.library.playlists) < 50 {
+			index := len(fixture.library.playlists)
+			fixture.library.playlists[fmt.Sprintf("seed-%d", index)] = library.Playlist{ID: fmt.Sprintf("seed-%d", index)}
+		}
+		limitInput := map[string]any{
+			"idempotency_key":   "playlist-over-limit",
+			"expected_revision": 0,
+			"name":              "Лишний",
+			"tracks":            []any{},
+		}
+		response = requestJSON(t, client, http.MethodPut, server.URL+"/api/v1/me/playlists/123e4567-e89b-12d3-a456-426614174012", limitInput)
+		assertStatus(t, response, http.StatusConflict)
+		decodeResponse(t, response, &conflict)
+		if conflict.Error.Code != "playlist_limit_reached" {
+			t.Fatalf("playlist limit = %#v", conflict)
+		}
 	})
 
 	t.Run("events accepts array and envelope", func(t *testing.T) {
@@ -639,6 +727,7 @@ type fakeLibraryBackend struct {
 	preferenceReceipts map[string]fakePreferenceReceipt
 	history            map[string]library.HistoryEntry
 	historyReceipts    map[string]fakeHistoryReceipt
+	historyGeneration  int64
 	playlists          map[string]library.Playlist
 	playlistReceipts   map[string]fakePlaylistReceipt
 }
@@ -724,7 +813,7 @@ func (f *fakeLibraryBackend) SetTrackPreference(_ context.Context, userID string
 	return result, nil
 }
 
-func (f *fakeLibraryBackend) ListHistory(_ context.Context, _ string, limit int) ([]library.HistoryEntry, error) {
+func (f *fakeLibraryBackend) GetHistory(_ context.Context, _ string, limit int) (library.HistorySnapshot, error) {
 	entries := make([]library.HistoryEntry, 0, len(f.history))
 	for _, entry := range f.history {
 		entries = append(entries, entry)
@@ -738,7 +827,7 @@ func (f *fakeLibraryBackend) ListHistory(_ context.Context, _ string, limit int)
 	if limit < len(entries) {
 		entries = entries[:limit]
 	}
-	return entries, nil
+	return library.HistorySnapshot{Generation: f.historyGeneration, History: entries}, nil
 }
 
 func (f *fakeLibraryBackend) RecordHistory(_ context.Context, _ string, input library.HistoryInput) (library.HistoryEntry, error) {
@@ -748,6 +837,9 @@ func (f *fakeLibraryBackend) RecordHistory(_ context.Context, _ string, input li
 	}
 	if f.historyReceipts == nil {
 		f.historyReceipts = make(map[string]fakeHistoryReceipt)
+	}
+	if normalized.Generation != f.historyGeneration {
+		return library.HistoryEntry{}, library.ErrHistoryGenerationConflict
 	}
 	fingerprint := string(library.HistoryRequestFingerprint(normalized))
 	if receipt, found := f.historyReceipts[normalized.IdempotencyKey]; found {
@@ -784,10 +876,11 @@ func (f *fakeLibraryBackend) RecordHistory(_ context.Context, _ string, input li
 	return entry, nil
 }
 
-func (f *fakeLibraryBackend) ClearHistory(_ context.Context, _ string) error {
+func (f *fakeLibraryBackend) ClearHistory(_ context.Context, _ string) (int64, error) {
 	f.history = make(map[string]library.HistoryEntry)
 	f.historyReceipts = make(map[string]fakeHistoryReceipt)
-	return nil
+	f.historyGeneration++
+	return f.historyGeneration, nil
 }
 
 func (f *fakeLibraryBackend) ListPlaylists(_ context.Context, _ string) ([]library.Playlist, error) {
@@ -826,6 +919,26 @@ func (f *fakeLibraryBackend) ReplacePlaylist(_ context.Context, _ string, playli
 	if f.playlists == nil {
 		f.playlists = make(map[string]library.Playlist)
 	}
+	previous, found := f.playlists[playlistID]
+	if !found {
+		if *normalized.ExpectedRevision != 0 {
+			return library.Playlist{}, library.ErrPlaylistRevisionConflict
+		}
+		if normalized.LegacyID != "" {
+			for _, existing := range f.playlists {
+				if existing.LegacyID == normalized.LegacyID {
+					stored := copyFakePlaylist(existing)
+					f.playlistReceipts[normalized.IdempotencyKey] = fakePlaylistReceipt{fingerprint: fingerprint, playlist: &stored}
+					return stored, nil
+				}
+			}
+		}
+		if len(f.playlists) >= 50 {
+			return library.Playlist{}, library.ErrPlaylistLimitReached
+		}
+	} else if *normalized.ExpectedRevision != previous.Revision {
+		return library.Playlist{}, library.ErrPlaylistRevisionConflict
+	}
 	tracks := make([]library.TrackSnapshot, 0, len(normalized.Tracks))
 	for _, track := range normalized.Tracks {
 		tracks = append(tracks, library.TrackSnapshot{
@@ -835,13 +948,13 @@ func (f *fakeLibraryBackend) ReplacePlaylist(_ context.Context, _ string, playli
 		})
 	}
 	now := time.Now().UTC()
-	previous, found := f.playlists[playlistID]
 	result := library.Playlist{
-		ID: playlistID, Name: normalized.Name, Description: normalized.Description,
+		ID: playlistID, LegacyID: normalized.LegacyID, Name: normalized.Name, Description: normalized.Description,
 		Tracks: tracks, Pinned: normalized.Pinned, Liked: normalized.Liked,
 		Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}
 	if found {
+		result.LegacyID = previous.LegacyID
 		result.Revision = previous.Revision
 		result.CreatedAt = previous.CreatedAt
 		if reflect.DeepEqual(previous.Tracks, tracks) && previous.Name == result.Name && previous.Description == result.Description && previous.Pinned == result.Pinned && previous.Liked == result.Liked {
@@ -868,14 +981,23 @@ func (f *fakeLibraryBackend) DeletePlaylist(_ context.Context, _ string, playlis
 	if f.playlistReceipts == nil {
 		f.playlistReceipts = make(map[string]fakePlaylistReceipt)
 	}
-	fingerprint := string(library.PlaylistDeleteRequestFingerprint(playlistID))
+	fingerprint := string(library.PlaylistDeleteRequestFingerprint(playlistID, normalized))
 	if receipt, found := f.playlistReceipts[normalized.IdempotencyKey]; found {
 		if receipt.fingerprint != fingerprint || receipt.deleted == nil {
 			return library.PlaylistDeleteResult{}, library.ErrPlaylistIdempotencyConflict
 		}
 		return *receipt.deleted, nil
 	}
-	delete(f.playlists, playlistID)
+	previous, found := f.playlists[playlistID]
+	if found && *normalized.ExpectedRevision != previous.Revision {
+		return library.PlaylistDeleteResult{}, library.ErrPlaylistRevisionConflict
+	}
+	if !found && *normalized.ExpectedRevision != 0 {
+		return library.PlaylistDeleteResult{}, library.ErrPlaylistRevisionConflict
+	}
+	if found {
+		delete(f.playlists, playlistID)
+	}
 	result := library.PlaylistDeleteResult{ID: playlistID, Deleted: true}
 	f.playlistReceipts[normalized.IdempotencyKey] = fakePlaylistReceipt{fingerprint: fingerprint, deleted: &result}
 	return result, nil

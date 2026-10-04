@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useApp } from "../state/context.js";
-import { duration, uniqueTracks } from "../lib/library.js";
-import { searchCatalog } from "../lib/api.js";
+import { duration, trackKey, uniqueTracks } from "../lib/library.js";
+import {
+  musicSources,
+  resolveExternalTrack,
+  searchCatalog,
+  searchSpotifyCatalog,
+  searchYouTubeCatalog,
+} from "../lib/api.js";
 import { correctQuery } from "../lib/suggest.js";
 import { useRemote } from "../lib/useRemote.js";
 import { TrackList, TrackCards } from "../components/Tracks.jsx";
@@ -19,6 +25,9 @@ export default function Search() {
   const q = params.get("q") || "",
     kind = params.get("type") || "all",
     source = params.get("source") || "soundcloud";
+  const sourceDefinition =
+    musicSources.find((item) => item.id === source) || musicSources[0];
+  const supportedKinds = sourceDefinition.kinds;
   const [input, setInput] = useState(q);
   const [shelf, setShelf] = useState("popular");
   const recordedSearch = useRef("");
@@ -41,12 +50,85 @@ export default function Search() {
     return () => clearTimeout(timer);
   }, [input, q, setParams]);
   const remote = useRemote(
-    `${app.user?.id}:search:${source}:${kind}:${q}`,
+    `${app.user?.id}:search:${source}:${kind}:${q}:${source === "local" ? app.catalog.length : ""}`,
     async (signal) => {
       if (source === "local") {
-        const tracks = await searchCatalog("tracks", q, signal);
+        const normalized = q.toLocaleLowerCase();
+        const tracks = app.catalog.filter((track) =>
+          `${track.title} ${track.artist}`
+            .toLocaleLowerCase()
+            .includes(normalized),
+        );
         return {
           tracks,
+          artists:
+            kind === "all" || kind === "artists"
+              ? [
+                  ...new Map(
+                    tracks
+                      .filter((track) => track.artistId)
+                      .map((track) => [
+                        `${track.source}:${track.artistId}`,
+                        {
+                          id: track.artistId,
+                          source: track.source,
+                          name: track.artist,
+                          artwork: track.artwork,
+                        },
+                      ]),
+                  ).values(),
+                ]
+              : [],
+          playlists:
+            kind === "all" || kind === "playlists" || kind === "albums"
+              ? [
+                  ...app.library.playlists,
+                  ...app.library.savedPlaylists,
+                ].filter((playlist) =>
+                  playlist.name.toLocaleLowerCase().includes(normalized),
+                )
+              : [],
+        };
+      }
+      if (source === "spotify") {
+        const requestedKinds =
+          kind === "all"
+            ? ["tracks", "artists", "albums", "playlists"]
+            : [kind];
+        const entries = await Promise.allSettled(
+          requestedKinds.map((value) => searchSpotifyCatalog(value, q, signal)),
+        );
+        if (entries.every((entry) => entry.status === "rejected")) {
+          throw entries[0].reason;
+        }
+        const result = Object.fromEntries(
+          requestedKinds.map((value, index) => [
+            value,
+            entries[index].status === "fulfilled" ? entries[index].value : [],
+          ]),
+        );
+        return {
+          tracks: result.tracks || [],
+          artists: result.artists || [],
+          playlists: [...(result.albums || []), ...(result.playlists || [])],
+        };
+      }
+      if (source === "youtube") {
+        return {
+          tracks:
+            kind === "all" || kind === "tracks"
+              ? await searchYouTubeCatalog(q, signal)
+              : [],
+          artists: [],
+          playlists: [],
+        };
+      }
+      if (source === "external") {
+        return {
+          tracks:
+            kind === "all" || kind === "tracks"
+              ? [await resolveExternalTrack(q, signal)]
+              : [],
           artists: [],
           playlists: [],
         };
@@ -156,7 +238,9 @@ export default function Search() {
           title: track.title,
           track,
         },
-        ...state.searches.filter((item) => item?.track?.id !== track.id),
+        ...state.searches.filter(
+          (item) => trackKey(item?.track) !== trackKey(track),
+        ),
       ].slice(0, 30),
     }));
   const collections = [
@@ -177,7 +261,11 @@ export default function Search() {
         <input
           autoFocus
           aria-label="Поиск музыки"
-          placeholder="Что вы чувствуете или ищете?"
+          placeholder={
+            source === "external"
+              ? "Вставьте ссылку YouTube, VK, Bandcamp…"
+              : "Что вы чувствуете или ищете?"
+          }
           value={input}
           onChange={(e) => setInput(e.target.value)}
         />
@@ -215,28 +303,46 @@ export default function Search() {
               ["artists", "Исполнители"],
               ["albums", "Альбомы"],
               ["playlists", "Плейлисты"],
-            ].map(([value, label]) => (
-              <button
-                key={value}
-                className={kind === value ? "selected" : ""}
-                aria-pressed={kind === value}
-                onClick={() => setFilter("type", value)}
-              >
-                {label}
-              </button>
-            ))}
+            ]
+              .filter(([value]) => supportedKinds.includes(value))
+              .map(([value, label]) => (
+                <button
+                  key={value}
+                  className={kind === value ? "selected" : ""}
+                  aria-pressed={kind === value}
+                  onClick={() => setFilter("type", value)}
+                >
+                  {label}
+                </button>
+              ))}
             <select
               aria-label="Источник поиска"
               value={source}
-              onChange={(e) => setFilter("source", e.target.value)}
+              onChange={(e) => {
+                const nextSource = e.target.value;
+                const nextDefinition = musicSources.find(
+                  (item) => item.id === nextSource,
+                );
+                setParams((previous) => {
+                  const next = new URLSearchParams(previous);
+                  next.set("source", nextSource);
+                  if (!nextDefinition?.kinds.includes(kind)) {
+                    next.set("type", "all");
+                  }
+                  return next;
+                });
+              }}
             >
-              <option value="soundcloud">Каталог</option>
-              <option value="local">Mixora</option>
+              {musicSources.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
             </select>
           </div>
-          {!app.user && source === "soundcloud" && (
+          {!app.user && source !== "local" && (
             <div className="inline-notice">
-              Поиск по сохранённой музыке.
+              Войдите для поиска по подключённым источникам.
               <button onClick={() => app.setAuthOpen(true)}>
                 Войти для полного поиска
               </button>
@@ -319,7 +425,7 @@ export default function Search() {
                       if (item?.kind === "track" && item.track) {
                         const track = item.track;
                         const liked = app.library.likes.some(
-                          (entry) => entry.id === track.id,
+                          (entry) => trackKey(entry) === trackKey(track),
                         );
                         return (
                           <div

@@ -2,8 +2,19 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useApp } from "../state/context.js";
 import { trackKey, duration } from "../lib/library.js";
+import { sourceLabel } from "../lib/api.js";
 import Icon from "./Icon.jsx";
 import { Cover, IconButton, Modal, Empty } from "./Primitives.jsx";
+
+function trackSourceLabel(track) {
+  const access =
+    track.access === "preview"
+      ? "Фрагмент"
+      : track.access === "blocked"
+        ? "Недоступен"
+        : "";
+  return [sourceLabel(track.source), access].filter(Boolean).join(" · ");
+}
 export function TrackMenu({ track, onClose, playlistId }) {
   const app = useApp();
   const [view, setView] = useState("main"),
@@ -25,7 +36,7 @@ export function TrackMenu({ track, onClose, playlistId }) {
             Моя волна по треку
           </button>
           <Link
-            to={`/album/track?id=${encodeURIComponent(track.id)}`}
+            to={`/album/track?id=${encodeURIComponent(track.id)}&source=${encodeURIComponent(track.source || "soundcloud")}`}
             onClick={onClose}
           >
             <Icon name="info_xxs" />О треке
@@ -133,6 +144,7 @@ export function TrackList({
       <div className={`track-list ${columns ? "track-list-columns" : ""}`}>
         {visible.map((t, i) => {
           const active = app.current && trackKey(t) === trackKey(app.current);
+          const playable = t.access !== "blocked";
           const liked = app.library.likes.some(
             (x) => trackKey(x) === trackKey(t),
           );
@@ -144,6 +156,7 @@ export function TrackList({
               <button
                 className="track-play"
                 aria-label={`${active && app.playing ? "Приостановить" : "Слушать"} ${t.title}`}
+                disabled={!playable}
                 onClick={() => {
                   if (active) app.toggle();
                   else {
@@ -162,6 +175,7 @@ export function TrackList({
               <div className="track-meta">
                 <button
                   className="track-title"
+                  disabled={!playable}
                   onClick={() => {
                     onActivate?.(t);
                     app.play(t, visible);
@@ -172,19 +186,13 @@ export function TrackList({
                 </button>
                 <Link
                   className="artist-link"
-                  to={`/artist?id=${encodeURIComponent(t.artistId || t.artist)}`}
+                  to={`/artist?id=${encodeURIComponent(t.artistId || t.artist)}&source=${encodeURIComponent(t.source || "soundcloud")}`}
                 >
                   {t.artist}
                 </Link>
               </div>
               {!compact && (
-                <span className="source-label">
-                  {t.access === "preview"
-                    ? "Фрагмент"
-                    : t.access === "blocked"
-                      ? "Недоступен"
-                      : ""}
-                </span>
+                <span className="source-label">{trackSourceLabel(t)}</span>
               )}
               <IconButton
                 label={
@@ -222,13 +230,16 @@ export function TrackCards({ tracks, onActivate }) {
     <div className="card-grid">
       {tracks
         .filter((t) => app.settings.explicit || !t.explicit)
-        .map((t) => (
+        .map((t) => {
+          const playable = t.access !== "blocked";
+          return (
           <article className="music-card" key={trackKey(t)}>
             <div className="card-image TrackCard_coverBlock__WdvvQ">
               <Cover track={t} large />
               <button
                 className="card-play"
                 aria-label={`Слушать ${t.title}`}
+                disabled={!playable}
                 onClick={() => {
                   onActivate?.(t);
                   app.play(t, tracks);
@@ -239,6 +250,7 @@ export function TrackCards({ tracks, onActivate }) {
             </div>
             <button
               className="card-title TrackCard_title__BVLuv"
+              disabled={!playable}
               onClick={() => {
                 onActivate?.(t);
                 app.play(t, tracks);
@@ -248,15 +260,14 @@ export function TrackCards({ tracks, onActivate }) {
             </button>
             <Link
               className="artist-link"
-              to={`/artist?id=${encodeURIComponent(t.artistId || t.artist)}`}
+              to={`/artist?id=${encodeURIComponent(t.artistId || t.artist)}&source=${encodeURIComponent(t.source || "soundcloud")}`}
             >
               {t.artist}
             </Link>
-            {t.access === "preview" && (
-              <span className="card-source">Фрагмент</span>
-            )}
+            <span className="card-source">{trackSourceLabel(t)}</span>
           </article>
-        ))}
+          );
+        })}
     </div>
   );
 }

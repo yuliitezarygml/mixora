@@ -242,7 +242,12 @@ func main() {
 
 	// 3. Initialize yt-dlp Extractor
 	log.Println("[INFO] Initializing Universal Extractor (yt-dlp)...")
-	ytClient := ytdlp.New()
+	ytOptions := make([]ytdlp.Option, 0, 1)
+	if cookiesPath := strings.TrimSpace(os.Getenv("MIXORA_YTDLP_COOKIES_FILE")); cookiesPath != "" {
+		ytOptions = append(ytOptions, ytdlp.WithCookiesFile(cookiesPath))
+		log.Println("[INFO] yt-dlp cookies file configured for sources that require an authenticated browser session")
+	}
+	ytClient := ytdlp.New(ytOptions...)
 	if ytClient.IsInstalled() {
 		ver, _ := ytClient.Version(ctx)
 		log.Printf("[SUCCESS] yt-dlp detected: version %s (%s)", ver, ytClient.BinaryPath())
@@ -299,7 +304,7 @@ func main() {
 		log.Println("  - GET/PUT /api/v1/library")
 		log.Println("  - GET/PUT /api/v1/me/track-preferences")
 		log.Println("  - GET /api/v1/history")
-		log.Println("  - PUT /api/v1/me/history")
+		log.Println("  - PUT/DELETE /api/v1/me/history")
 		log.Println("  - GET /api/v1/me/playlists")
 		log.Println("  - PUT/DELETE /api/v1/me/playlists/{playlistID}")
 		log.Println("  - POST /api/v1/events")

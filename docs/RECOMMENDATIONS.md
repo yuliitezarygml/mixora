@@ -45,7 +45,8 @@ recommendation_impressions + impression events
 Gorse и Ollama не получают cookie, email, пароль или URL аудиопотока. User ID
 в Gorse — внутренний UUID, item ID — каноническая пара `source:id`. Полный
 metadata snapshot хранится в `track_catalog`; legacy SoundCloud URN/path-like
-ID нормализуются на границах клиента, API и миграции данных.
+ID нормализуются в едином music API-adapter клиента, на API-границе и в
+миграциях данных, а не в UI-компонентах.
 
 ## Collaborative-контур
 
@@ -66,6 +67,12 @@ ID нормализуются на границах клиента, API и ми�
   а не выдаёт невалидную сессию.
 - Показ Wave сохраняется одновременно в `recommendation_impressions` и как
   `impression` в `listening_events`.
+- Клиент хранит для активной Wave короткий account-scoped resume snapshot:
+  preferences, context, round и не более 100 пар `source:id → session_id`.
+  В нём нет cookie, аудио-URL или полных метаданных. После перезапуска mapping
+  восстанавливается только для треков, реально вернувшихся в локальную очередь;
+  сервер всё равно повторно проверяет ownership по `recommendation_impressions`.
+  Если пользователь включает обычную очередь, этот Wave snapshot очищается.
 
 ## Текущее состояние «нравится / не нравится»
 
@@ -175,22 +182,67 @@ make recommendations
 `.env.example` содержит синхронизированный безопасный шаблон, но не заменяет
 реальный `.env`.
 
+## История и плейлисты аккаунта
+
+`007_track_history.sql` вынесла историю из переходного library snapshot в
+`user_track_history`. Каждая значимая прослушанная композиция записывается
+идемпотентно, агрегируется по канонической паре `source/id` и сохраняет счётчик
+и время первого/последнего прослушивания. `GET /api/v1/history` возвращает
+`{ generation, history }`; `PUT /api/v1/me/history` принимает одну
+offline-запись с этой generation, а `DELETE /api/v1/me/history` очищает
+историю и повышает её. Миграция `011_user_history_generation.sql` делает
+generation durable fence: запись, поставленная в очередь до clear, получает
+`409 history_generation_conflict`, даже если достигает API после DELETE.
+Клиент удаляет такую устаревшую запись и загружает server-owned историю вместо
+повторной отправки. Wave использует эту серверную историю до временного
+browser-local overlay.
+
+`008_user_playlists.sql` добавила `user_playlists`, упорядоченные
+`user_playlist_tracks` и receipts идемпотентности. Corrective migrations
+`009`/`010` безопасно пересобирают только legacy-import записи revision `1`
+из первого дубликата legacy ID; применённая `008` не изменяется. `GET
+/api/v1/me/playlists` читает только плейлисты аккаунта; `PUT` и `DELETE`
+`/api/v1/me/playlists/{playlistID}` принимают полный desired state либо
+удаление с обязательным `expected_revision`: создание начинается с `0`, а
+изменение/удаление требует точной revision, иначе сервер отвечает
+`409 playlist_revision_conflict`. Account-wide lock вместе с проверкой лимита
+не позволяет создать невидимый 51-й плейлист. Для browser-only legacy
+backfill можно однократно передать `legacy_id`; сервер сопоставляет его только
+в рамках одного аккаунта, поэтому второй клиент не создаёт дубликат с другим
+UUID. Клиент coalesces offline-изменения для каждого плейлиста, rebases
+следующую собственную queued-правку после успешной записи и записывает
+«Создать и добавить» одним действием. Эти маршруты не заменяют read-only
+playlist API готового music engine.
+
+Для обоих состояний сервер является источником истины после GET, а клиент
+показывает неотправленную account-scoped очередь поверх ответа. Тихого
+last-writer-wins нет: history защищена generation, а плейлист — revision.
+При конфликте клиент отбрасывает только устаревшую mutation, сообщает об этом
+и загружает актуальную версию. Полноценный field-level merge с пользовательским
+выбором — отдельный UX-этап, но серверная версия не перезаписывается молча.
+
+`009`/`010` нужно выкатывать до первого transition-write, который очистит
+legacy `payload.playlists`: эти corrective migrations восстанавливают только
+данные, которые ещё есть в snapshot. Если исходный payload уже утрачен,
+безопасная операция — аудит и восстановление из резервной копии, а не попытка
+синтезировать треки по неполным данным.
+
 ## Что ещё не реализовано или не подтверждено сквозным сценарием
 
-- нормализованные server-side history и CRUD/ordering плейлистов;
-- разрешение конфликтов нескольких устройств для history и плейлистов;
+- пользовательский field-level merge или выбор версии при конфликте плейлиста;
 - полный сбор repeat/seek на всех путях плеера (сейчас есть repeat-one и
   осмысленные перемотки от пяти секунд);
 - offline evaluation, A/B-ready assignment и продуктовые dashboards;
 - управляемая exploration и объяснение причины для каждого трека;
 - CLAP/audio embeddings — только после измеримого сравнения с text embeddings.
 
-Контур предпочтений покрыт целевыми Go unit/HTTP contract tests и клиентскими
-unit tests: сохранение и replay состояния, конфликт idempotency key, очередь,
-retry outbox и перевод трёх состояний в операции Gorse. Полный ручной сценарий
-в запущенном Docker-стеке — migration → offline click → повторный вход →
-подтверждённая публикация в Gorse — остаётся отдельной проверкой перед тем, как
-считать его production-ready.
+Контуры предпочтений, истории и плейлистов покрыты целевыми Go unit/HTTP
+contract tests и клиентскими unit tests: сохранение и replay состояния,
+конфликт idempotency key, очередь, retry outbox, generation очистки, revision
+плейлистов, порядок и лимит плейлистов. В Docker подтверждены migration, Gorse
+neutral/retry lifecycle, history replay/aggregate/clear-fence и playlist
+create/reorder/delete/limit. Полная production-проверка сети между несколькими
+устройствами остаётся отдельной задачей.
 
 Основные метрики перед production: completion rate, early-skip rate, likes на
 100 impressions, diversity/novelty, недоступные треки, доля fallback-ответов,

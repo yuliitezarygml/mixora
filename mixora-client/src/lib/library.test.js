@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   duration,
+  entityKey,
   uniqueTracks,
   shuffleTracks,
   libraryPayload,
@@ -21,6 +22,11 @@ test("provider IDs remain distinct", () => {
     ]).length,
     2,
   );
+});
+test("provider-aware entity keys preserve legacy SoundCloud saves", () => {
+  assert.equal(entityKey({ source: "spotify", id: "same" }), "spotify:same");
+  assert.equal(entityKey({ source: "bandcamp", id: "same" }), "bandcamp:same");
+  assert.equal(entityKey({ id: "legacy" }), "soundcloud:legacy");
 });
 test("library payload keeps server limits", () => {
   const payload = libraryPayload({

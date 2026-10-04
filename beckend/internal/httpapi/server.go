@@ -55,9 +55,9 @@ type libraryBackend interface {
 	Put(context.Context, string, json.RawMessage) (library.Snapshot, error)
 	ListTrackPreferences(context.Context, string) ([]library.TrackPreference, error)
 	SetTrackPreference(context.Context, string, library.PreferenceInput) (library.TrackPreference, error)
-	ListHistory(context.Context, string, int) ([]library.HistoryEntry, error)
+	GetHistory(context.Context, string, int) (library.HistorySnapshot, error)
 	RecordHistory(context.Context, string, library.HistoryInput) (library.HistoryEntry, error)
-	ClearHistory(context.Context, string) error
+	ClearHistory(context.Context, string) (int64, error)
 	ListPlaylists(context.Context, string) ([]library.Playlist, error)
 	ReplacePlaylist(context.Context, string, string, library.PlaylistInput) (library.Playlist, error)
 	DeletePlaylist(context.Context, string, string, library.PlaylistDeleteInput) (library.PlaylistDeleteResult, error)

@@ -67,6 +67,11 @@ func TestHistoryFingerprintIncludesOccurrenceAndNotIdempotencyKey(t *testing.T) 
 	if got, unchanged := string(HistoryRequestFingerprint(second)), string(HistoryRequestFingerprint(first)); got == unchanged {
 		t.Fatal("occurrence did not change fingerprint")
 	}
+	second = first
+	second.Generation = 1
+	if got, unchanged := string(HistoryRequestFingerprint(second)), string(HistoryRequestFingerprint(first)); got == unchanged {
+		t.Fatal("generation did not change fingerprint")
+	}
 }
 
 func TestHistoryLockKeyKeepsFieldBoundariesDistinct(t *testing.T) {

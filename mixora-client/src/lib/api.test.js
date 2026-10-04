@@ -5,7 +5,13 @@ import {
   catalogResource,
   getTrackPlayback,
   normalizeTrackPlayback,
+  canonicalTrackReference,
+  externalTrack,
   searchCatalog,
+  searchSpotifyCatalog,
+  searchYouTubeCatalog,
+  resolveExternalTrack,
+  spotifyTrack,
   soundcloudPlaylist,
   soundcloudResourceId,
   soundcloudTrack,
@@ -122,6 +128,29 @@ test("extracts the numeric backend id from ids and SoundCloud URNs", () => {
   assert.throws(() => soundcloudResourceId("not-an-id"), /идентификатор/);
 });
 
+test("exposes canonical track references to state stores without leaking provider grammar", () => {
+  assert.deepEqual(
+    canonicalTrackReference({
+      source: " SoundCloud ",
+      id: "soundcloud:tracks:1534086151",
+      artistId: "soundcloud:users:1030983220",
+    }),
+    {
+      source: "soundcloud",
+      id: "1534086151",
+      artistId: "1030983220",
+    },
+  );
+  assert.deepEqual(
+    canonicalTrackReference({ source: "local", id: " local:42 " }),
+    { source: "local", id: "local:42" },
+  );
+  assert.equal(
+    canonicalTrackReference({ source: "soundcloud", id: "not-an-id" }),
+    null,
+  );
+});
+
 test("normalizes both progressive and HLS playback responses", () => {
   assert.deepEqual(
     normalizeTrackPlayback({
@@ -139,6 +168,142 @@ test("normalizes both progressive and HLS playback responses", () => {
       .format,
     "hls",
   );
+});
+
+test("adapts Spotify and universal extractor results into provider-neutral tracks", () => {
+  assert.deepEqual(
+    spotifyTrack({
+      id: "sp-1",
+      title: "  Тест  ",
+      artists: [{ id: "artist-1", name: "Исполнитель" }],
+      duration_ms: 123000,
+      preview_url: "https://cdn.example/preview.mp3",
+      album: { name: "Альбом", images: [{ url: "https://img.example/a.jpg" }] },
+      external_url: "https://open.spotify.com/track/sp-1",
+    }),
+    {
+      id: "sp-1",
+      source: "spotify",
+      title: "Тест",
+      artist: "Исполнитель",
+      artistId: "artist-1",
+      artwork: "https://img.example/a.jpg",
+      duration: 123,
+      explicit: false,
+      access: "preview",
+      permalink: "https://open.spotify.com/track/sp-1",
+      album: "Альбом",
+    },
+  );
+  assert.equal(
+    spotifyTrack({ id: "connect-only", title: "Без превью" }).access,
+    "blocked",
+  );
+  assert.deepEqual(
+    externalTrack({
+      id: "yt-1",
+      title: "Видео",
+      uploader: "Канал",
+      duration: 42,
+      extractor: "youtube",
+      webpage_url: "https://www.youtube.com/watch?v=yt-1",
+    }),
+    {
+      id: "yt-1",
+      source: "youtube",
+      title: "Видео",
+      artist: "Канал",
+      artwork: "",
+      duration: 42,
+      explicit: false,
+      access: "playable",
+      permalink: "https://www.youtube.com/watch?v=yt-1",
+      album: "",
+      description: "",
+    },
+  );
+  assert.equal(
+    externalTrack({
+      id: "vk-1",
+      title: "VK track",
+      extractor: "generic",
+      webpage_url: "https://vk.com/audio-1",
+    }).source,
+    "vk",
+  );
+});
+
+test("uses provider-specific routes for Spotify, YouTube and universal links", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    let data;
+    if (url.includes("/spotify/search")) {
+      data = {
+        tracks: [
+          {
+            id: "sp-1",
+            title: "Spotify track",
+            artists: [{ id: "artist-1", name: "Spotify artist" }],
+            preview_url: "https://cdn.example/preview.mp3",
+          },
+        ],
+      };
+    } else if (url.includes("/youtube/search")) {
+      data = {
+        items: [
+          {
+            id: "yt-1",
+            title: "YouTube track",
+            uploader: "YouTube artist",
+            // Flat yt-dlp search results may omit the extractor name.
+            extractor: "",
+            webpage_url: "https://www.youtube.com/watch?v=yt-1",
+          },
+        ],
+      };
+    } else if (url.includes("/spotify/tracks/")) {
+      data = { preview_url: "https://cdn.example/preview.mp3" };
+    } else {
+      data = {
+        id: "bc-1",
+        title: "Bandcamp track",
+        uploader: "Bandcamp artist",
+        extractor: "bandcamp",
+        webpage_url: "https://artist.bandcamp.com/track/test",
+        audio_url: "https://cdn.example/track.m4a",
+      };
+    }
+    return new Response(JSON.stringify({ success: true, data }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    const spotify = await searchSpotifyCatalog("tracks", "test");
+    const youtube = await searchYouTubeCatalog("test");
+    const bandcamp = await resolveExternalTrack(
+      "https://artist.bandcamp.com/track/test",
+    );
+    const spotifyPlayback = await getTrackPlayback(spotify[0]);
+    const externalPlayback = await getTrackPlayback(bandcamp);
+
+    assert.equal(spotify[0].source, "spotify");
+    assert.equal(youtube[0].source, "youtube");
+    assert.equal(bandcamp.source, "bandcamp");
+    assert.equal(spotifyPlayback.url, "https://cdn.example/preview.mp3");
+    assert.equal(externalPlayback.url, "https://cdn.example/track.m4a");
+    assert.deepEqual(calls, [
+      "/api/v1/spotify/search?q=test&type=track&limit=40",
+      "/api/v1/youtube/search?q=test&limit=25",
+      "/api/v1/extract?url=https%3A%2F%2Fartist.bandcamp.com%2Ftrack%2Ftest",
+      "/api/v1/spotify/tracks/sp-1/stream",
+      "/api/v1/extract?url=https%3A%2F%2Fartist.bandcamp.com%2Ftrack%2Ftest",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("catalog and playback call the ready backend routes", async () => {

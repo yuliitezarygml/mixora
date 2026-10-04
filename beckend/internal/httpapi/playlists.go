@@ -7,6 +7,11 @@ import (
 	"github.com/iulian/soundcloud-go/internal/library"
 )
 
+// The domain permits 500 compact snapshots. Eight MiB covers their valid JSON
+// representation even when strings require escaping, while still bounding an
+// untrusted request well below an unbounded decoder allocation.
+const maxPlaylistRequestBytes = 8 << 20
+
 // getPlaylists returns account-owned playlists only. Source playlists remain
 // available through the music engine's existing read-only catalog routes.
 func (s *Server) getPlaylists(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +30,7 @@ func (s *Server) putPlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input library.PlaylistInput
-	if err := decodeJSON(w, r, &input, 512<<10); err != nil {
+	if err := decodeJSON(w, r, &input, maxPlaylistRequestBytes); err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid_playlist", "Некорректные данные плейлиста")
 		return
 	}
@@ -37,6 +42,14 @@ func (s *Server) putPlaylist(w http.ResponseWriter, r *http.Request) {
 	playlist, err := s.libraries.ReplacePlaylist(r.Context(), principalFrom(r).User.ID, playlistID, normalized)
 	if errors.Is(err, library.ErrPlaylistIdempotencyConflict) {
 		writeError(w, r, http.StatusConflict, "idempotency_conflict", "Этот ключ идемпотентности уже использован для другого изменения плейлиста")
+		return
+	}
+	if errors.Is(err, library.ErrPlaylistRevisionConflict) {
+		writeError(w, r, http.StatusConflict, "playlist_revision_conflict", "Плейлист был изменён на другом устройстве")
+		return
+	}
+	if errors.Is(err, library.ErrPlaylistLimitReached) {
+		writeError(w, r, http.StatusConflict, "playlist_limit_reached", "В аккаунте можно хранить не более 50 плейлистов")
 		return
 	}
 	if err != nil {
@@ -65,6 +78,10 @@ func (s *Server) deletePlaylist(w http.ResponseWriter, r *http.Request) {
 	result, err := s.libraries.DeletePlaylist(r.Context(), principalFrom(r).User.ID, playlistID, normalized)
 	if errors.Is(err, library.ErrPlaylistIdempotencyConflict) {
 		writeError(w, r, http.StatusConflict, "idempotency_conflict", "Этот ключ идемпотентности уже использован для другого изменения плейлиста")
+		return
+	}
+	if errors.Is(err, library.ErrPlaylistRevisionConflict) {
+		writeError(w, r, http.StatusConflict, "playlist_revision_conflict", "Плейлист был изменён на другом устройстве")
 		return
 	}
 	if err != nil {

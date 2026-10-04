@@ -17,12 +17,12 @@ func (s *Server) getHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "invalid_history_limit", "Некорректный лимит истории")
 		return
 	}
-	history, err := s.libraries.ListHistory(r.Context(), principalFrom(r).User.ID, limit)
+	history, err := s.libraries.GetHistory(r.Context(), principalFrom(r).User.ID, limit)
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "history_unavailable", "Не удалось загрузить историю прослушивания")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"history": history})
+	writeJSON(w, http.StatusOK, history)
 }
 
 func (s *Server) putHistory(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +41,10 @@ func (s *Server) putHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusConflict, "idempotency_conflict", "Этот ключ идемпотентности уже использован для другой записи истории")
 		return
 	}
+	if errors.Is(err, library.ErrHistoryGenerationConflict) {
+		writeError(w, r, http.StatusConflict, "history_generation_conflict", "История была очищена до сохранения этой записи")
+		return
+	}
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "history_unavailable", "Не удалось сохранить историю прослушивания")
 		return
@@ -49,11 +53,12 @@ func (s *Server) putHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteHistory(w http.ResponseWriter, r *http.Request) {
-	if err := s.libraries.ClearHistory(r.Context(), principalFrom(r).User.ID); err != nil {
+	generation, err := s.libraries.ClearHistory(r.Context(), principalFrom(r).User.ID)
+	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "history_unavailable", "Не удалось очистить историю прослушивания")
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]int64{"generation": generation})
 }
 
 func historyLimit(raw string) (int, error) {

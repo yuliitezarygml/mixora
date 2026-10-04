@@ -6,6 +6,7 @@ import { PlaylistGrid } from "../components/Catalog.jsx";
 import { Tabs, Empty, Modal } from "../components/Primitives.jsx";
 import Icon from "../components/Icon.jsx";
 import CollectionOverview from "./CollectionOverview.jsx";
+import { entityKey, trackKey } from "../lib/library.js";
 export function PlaylistCards() {
   const app = useApp();
   return (
@@ -112,7 +113,7 @@ export default function Collection() {
       <>
         <p className="muted">Вы можете вернуть треки в рекомендации.</p>
         {app.library.dislikes.map((t) => (
-          <div className="setting-row" key={t.id}>
+          <div className="setting-row" key={trackKey(t)}>
             <span>
               {t.title} — {t.artist}
             </span>
@@ -213,8 +214,8 @@ export default function Collection() {
         {app.library.artists.map((a) => (
           <Link
             className="artist-card"
-            to={`/artist?id=${encodeURIComponent(a.id)}`}
-            key={a.id}
+            to={`/artist?id=${encodeURIComponent(a.id)}&source=${encodeURIComponent(a.source || "soundcloud")}`}
+            key={entityKey(a)}
           >
             {a.artwork ? (
               <img src={a.artwork} alt="" />

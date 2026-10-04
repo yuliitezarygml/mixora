@@ -173,6 +173,10 @@ docker compose down
 | `POST` | `/api/v1/auth/password/{request\|reset}` | Сброс пароля через mail outbox |
 | `GET/PUT` | `/api/v1/library` | Серверная библиотека пользователя |
 | `GET/PUT` | `/api/v1/me/track-preferences` | Текущее `liked` / `disliked` / `neutral` состояние трека |
+| `GET` | `/api/v1/history` | Нормализованная история прослушивания аккаунта |
+| `PUT/DELETE` | `/api/v1/me/history` | Идемпотентная запись или очистка истории аккаунта |
+| `GET` | `/api/v1/me/playlists` | Собственные аккаунтные плейлисты с порядком треков |
+| `PUT/DELETE` | `/api/v1/me/playlists/{playlistID}` | Полная идемпотентная запись или удаление аккаунтного плейлиста |
 | `POST` | `/api/v1/events` | События прослушивания |
 | `POST` | `/api/v1/wave` | Подбор треков «Моей волны» |
 | `POST` | `/api/v1/wave/{sessionId}/feedback` | Быстрый feedback текущей волны |
@@ -240,8 +244,53 @@ docker compose down
 Дополнительные отображаемые поля snapshot (`artwork`, `duration`, `artistId`,
 `explicit`, `access`, `permalink`) допускаются, но URL аудиопотока и provider
 credentials не сохраняются и не передаются в Gorse. Нормализация SoundCloud
-URN/path-like ID происходит на границе API. Переходный `/api/v1/library`
-больше не является источником истины для `likes` и `dislikes`.
+URN/path-like ID происходит в music API-adapter клиента, на границе API и в
+миграциях. Переходный `/api/v1/library`
+больше не является источником истины для `likes`, `dislikes`, истории и
+собственных плейлистов.
+
+### История прослушивания
+
+`GET /api/v1/history?limit=1..100` возвращает `{ "generation": N,
+"history": [...] }` с агрегированными уникальными треками по убыванию
+последнего прослушивания. `PUT /api/v1/me/history` принимает компактный
+provider-neutral snapshot, idempotency key и generation этого GET:
+
+```json
+{
+  "idempotency_key": "uuid-or-other-unique-key",
+  "generation": 0,
+  "occurred_at": "2026-10-03T12:00:00Z",
+  "track": {
+    "source": "soundcloud",
+    "id": "12345",
+    "title": "Название",
+    "artist": "Исполнитель"
+  }
+}
+```
+
+Повтор того же ключа возвращает прежний результат; другой запрос с тем же
+ключом получает `409`. `DELETE /api/v1/me/history` идемпотентно очищает
+историю и её replay receipts, повышает generation и отвечает, например,
+`{ "generation": 1 }`. Generation — durable clear fence: listen со старым
+значением получает `409 history_generation_conflict`, даже если он дошёл до
+сервера после DELETE. Запись, чтение и очистка также сериализованы per-user
+lock, чтобы GET видел согласованный snapshot.
+
+### Плейлисты аккаунта
+
+`GET /api/v1/me/playlists` возвращает только Mixora-плейлисты пользователя.
+`PUT /api/v1/me/playlists/{playlistID}` заменяет полный desired state одного
+плейлиста: имя, описание, флаги, упорядоченный набор уникальных compact track
+snapshots, `idempotency_key` и обязательный `expected_revision`. Создание
+использует revision `0`; обновление и DELETE должны передать точную текущую
+revision, иначе возвращается `409 playlist_revision_conflict`. Сервер
+атомарно ограничивает аккаунт 50 собственными плейлистами. Поле `legacy_id`
+разрешено только при первом browser-legacy backfill, чтобы разные устройства
+сопоставили один старый плейлист, и не является обычным редактируемым полем.
+Маршруты являются отдельными от существующего music engine и не меняют его
+поиск, метаданные или воспроизведение.
 
 ### Безопасный fallback и проверки
 

@@ -79,95 +79,240 @@ func (c *Client) searchWithAPI(ctx context.Context, query string, sType Resource
 		return fmt.Errorf("spotify search API failed (%d)", resp.StatusCode)
 	}
 
-	var apiResp struct {
-		Tracks struct {
-			Items []struct {
-				ID         string `json:"id"`
-				URI        string `json:"uri"`
-				Name       string `json:"name"`
-				DurationMs int64  `json:"duration_ms"`
-				Explicit   bool   `json:"explicit"`
-				PreviewURL string `json:"preview_url"`
-				Artists    []struct {
-					ID   string `json:"id"`
-					URI  string `json:"uri"`
-					Name string `json:"name"`
-				} `json:"artists"`
-				Album struct {
-					ID     string `json:"id"`
-					Name   string `json:"name"`
-					Images []struct {
-						URL    string `json:"url"`
-						Height int    `json:"height"`
-						Width  int    `json:"width"`
-					} `json:"images"`
-				} `json:"album"`
-			} `json:"items"`
-		} `json:"tracks"`
-	}
+	var apiResp spotifySearchAPIResponse
 
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
 		return err
 	}
 
-	for _, item := range apiResp.Tracks.Items {
-		track := models.Track{
-			ID:          item.ID,
-			URI:         item.URI,
-			Title:       item.Name,
-			DurationMs:  item.DurationMs,
-			Explicit:    item.Explicit,
-			PreviewURL:  item.PreviewURL,
-			ExternalURL: fmt.Sprintf("https://open.spotify.com/track/%s", item.ID),
-			IsPlayable:  true,
+	// Spotify puts results under a top-level key matching the requested type.
+	// Decode and normalize only that type so a valid artist/album/playlist
+	// response does not look like an empty track search.
+	switch sType {
+	case TypeArtist:
+		for _, item := range apiResp.Artists.Items {
+			result.Artists = append(result.Artists, normalizeSpotifyAPIArtist(item))
 		}
-		for _, a := range item.Artists {
-			track.Artists = append(track.Artists, models.Artist{
-				ID:          a.ID,
-				URI:         a.URI,
-				Name:        a.Name,
-				ExternalURL: fmt.Sprintf("https://open.spotify.com/artist/%s", a.ID),
-			})
+	case TypeAlbum:
+		for _, item := range apiResp.Albums.Items {
+			result.Albums = append(result.Albums, normalizeSpotifyAPIAlbum(item))
 		}
-		var imgs []models.Image
-		for _, img := range item.Album.Images {
-			imgs = append(imgs, models.Image{
-				URL:    img.URL,
-				Height: img.Height,
-				Width:  img.Width,
-			})
+	case TypePlaylist:
+		for _, item := range apiResp.Playlists.Items {
+			result.Playlists = append(result.Playlists, normalizeSpotifyAPIPlaylist(item))
 		}
-		track.Album = &models.Album{
-			ID:          item.Album.ID,
-			Name:        item.Album.Name,
-			Images:      imgs,
-			ExternalURL: fmt.Sprintf("https://open.spotify.com/album/%s", item.Album.ID),
+	default:
+		for _, item := range apiResp.Tracks.Items {
+			result.Tracks = append(result.Tracks, normalizeSpotifyAPITrack(item))
 		}
-		result.Tracks = append(result.Tracks, track)
 	}
 
 	return nil
 }
 
+// spotifySearchAPIResponse models the four result containers returned by the
+// official /v1/search endpoint. The API only fills the container requested in
+// the type parameter, but defining every container here keeps the normalizers
+// explicit and prevents type-specific fields from being silently discarded.
+type spotifySearchAPIResponse struct {
+	Tracks struct {
+		Items []spotifyAPITrack `json:"items"`
+	} `json:"tracks"`
+	Artists struct {
+		Items []spotifyAPIArtist `json:"items"`
+	} `json:"artists"`
+	Albums struct {
+		Items []spotifyAPIAlbum `json:"items"`
+	} `json:"albums"`
+	Playlists struct {
+		Items []spotifyAPIPlaylist `json:"items"`
+	} `json:"playlists"`
+}
+
+type spotifyAPIExternalURLs struct {
+	Spotify string `json:"spotify"`
+}
+
+type spotifyAPIImage struct {
+	URL    string `json:"url"`
+	Height int    `json:"height"`
+	Width  int    `json:"width"`
+}
+
+type spotifyAPIArtist struct {
+	ID           string                 `json:"id"`
+	URI          string                 `json:"uri"`
+	Name         string                 `json:"name"`
+	Genres       []string               `json:"genres"`
+	Images       []spotifyAPIImage      `json:"images"`
+	Popularity   int                    `json:"popularity"`
+	Followers    spotifyAPIFollowers    `json:"followers"`
+	ExternalURLs spotifyAPIExternalURLs `json:"external_urls"`
+}
+
+type spotifyAPIFollowers struct {
+	Total int `json:"total"`
+}
+
+type spotifyAPIAlbum struct {
+	ID           string                 `json:"id"`
+	URI          string                 `json:"uri"`
+	Name         string                 `json:"name"`
+	AlbumType    string                 `json:"album_type"`
+	ReleaseDate  string                 `json:"release_date"`
+	TotalTracks  int                    `json:"total_tracks"`
+	Images       []spotifyAPIImage      `json:"images"`
+	Artists      []spotifyAPIArtist     `json:"artists"`
+	ExternalURLs spotifyAPIExternalURLs `json:"external_urls"`
+}
+
+type spotifyAPITrack struct {
+	ID           string                 `json:"id"`
+	URI          string                 `json:"uri"`
+	Name         string                 `json:"name"`
+	DurationMs   int64                  `json:"duration_ms"`
+	Explicit     bool                   `json:"explicit"`
+	Popularity   int                    `json:"popularity"`
+	PreviewURL   string                 `json:"preview_url"`
+	IsPlayable   *bool                  `json:"is_playable"`
+	TrackNumber  int                    `json:"track_number"`
+	DiscNumber   int                    `json:"disc_number"`
+	Artists      []spotifyAPIArtist     `json:"artists"`
+	Album        spotifyAPIAlbum        `json:"album"`
+	ExternalURLs spotifyAPIExternalURLs `json:"external_urls"`
+}
+
+type spotifyAPIPlaylist struct {
+	ID           string                  `json:"id"`
+	URI          string                  `json:"uri"`
+	Name         string                  `json:"name"`
+	Description  string                  `json:"description"`
+	Owner        spotifyAPIOwner         `json:"owner"`
+	Images       []spotifyAPIImage       `json:"images"`
+	Tracks       spotifyAPITracksSummary `json:"tracks"`
+	ExternalURLs spotifyAPIExternalURLs  `json:"external_urls"`
+}
+
+type spotifyAPIOwner struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+}
+
+type spotifyAPITracksSummary struct {
+	Total int `json:"total"`
+}
+
+func normalizeSpotifyAPIImages(images []spotifyAPIImage) []models.Image {
+	result := make([]models.Image, 0, len(images))
+	for _, image := range images {
+		result = append(result, models.Image{
+			URL:    image.URL,
+			Height: image.Height,
+			Width:  image.Width,
+		})
+	}
+	return result
+}
+
+func spotifyAPIURI(resourceType ResourceType, id, uri string) string {
+	if uri != "" {
+		return uri
+	}
+	if id == "" {
+		return ""
+	}
+	return fmt.Sprintf("spotify:%s:%s", resourceType, id)
+}
+
+func spotifyAPIExternalURL(resourceType ResourceType, id, externalURL string) string {
+	if externalURL != "" {
+		return externalURL
+	}
+	if id == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://open.spotify.com/%s/%s", resourceType, id)
+}
+
+func normalizeSpotifyAPIArtist(item spotifyAPIArtist) models.Artist {
+	return models.Artist{
+		ID:          item.ID,
+		URI:         spotifyAPIURI(TypeArtist, item.ID, item.URI),
+		Name:        item.Name,
+		Genres:      item.Genres,
+		Images:      normalizeSpotifyAPIImages(item.Images),
+		Popularity:  item.Popularity,
+		Followers:   item.Followers.Total,
+		ExternalURL: spotifyAPIExternalURL(TypeArtist, item.ID, item.ExternalURLs.Spotify),
+	}
+}
+
+func normalizeSpotifyAPIAlbum(item spotifyAPIAlbum) models.Album {
+	album := models.Album{
+		ID:          item.ID,
+		URI:         spotifyAPIURI(TypeAlbum, item.ID, item.URI),
+		Name:        item.Name,
+		AlbumType:   item.AlbumType,
+		ReleaseDate: item.ReleaseDate,
+		TotalTracks: item.TotalTracks,
+		Images:      normalizeSpotifyAPIImages(item.Images),
+		ExternalURL: spotifyAPIExternalURL(TypeAlbum, item.ID, item.ExternalURLs.Spotify),
+	}
+	for _, artist := range item.Artists {
+		album.Artists = append(album.Artists, normalizeSpotifyAPIArtist(artist))
+	}
+	return album
+}
+
+func normalizeSpotifyAPITrack(item spotifyAPITrack) models.Track {
+	// Some Spotify markets omit is_playable. Keep the package's historical
+	// default (playable unless the API explicitly says otherwise) in that case.
+	isPlayable := true
+	if item.IsPlayable != nil {
+		isPlayable = *item.IsPlayable
+	}
+
+	track := models.Track{
+		ID:          item.ID,
+		URI:         spotifyAPIURI(TypeTrack, item.ID, item.URI),
+		Title:       item.Name,
+		DurationMs:  item.DurationMs,
+		Explicit:    item.Explicit,
+		Popularity:  item.Popularity,
+		PreviewURL:  item.PreviewURL,
+		IsPlayable:  isPlayable,
+		TrackNumber: item.TrackNumber,
+		DiscNumber:  item.DiscNumber,
+		ExternalURL: spotifyAPIExternalURL(TypeTrack, item.ID, item.ExternalURLs.Spotify),
+	}
+	for _, artist := range item.Artists {
+		track.Artists = append(track.Artists, normalizeSpotifyAPIArtist(artist))
+	}
+	if item.Album.ID != "" || item.Album.Name != "" || len(item.Album.Images) > 0 {
+		album := normalizeSpotifyAPIAlbum(item.Album)
+		track.Album = &album
+	}
+	return track
+}
+
+func normalizeSpotifyAPIPlaylist(item spotifyAPIPlaylist) models.Playlist {
+	owner := item.Owner.DisplayName
+	if owner == "" {
+		owner = item.Owner.ID
+	}
+	return models.Playlist{
+		ID:          item.ID,
+		URI:         spotifyAPIURI(TypePlaylist, item.ID, item.URI),
+		Name:        item.Name,
+		Description: item.Description,
+		Owner:       owner,
+		Images:      normalizeSpotifyAPIImages(item.Images),
+		TotalTracks: item.Tracks.Total,
+		ExternalURL: spotifyAPIExternalURL(TypePlaylist, item.ID, item.ExternalURLs.Spotify),
+	}
+}
+
 func (c *Client) searchPublic(ctx context.Context, query string, sType ResourceType, limit int) (*models.SearchResult, error) {
-	searchURL := fmt.Sprintf("https://html.duckduckgo.com/html/?q=site:open.spotify.com/%s+%s", sType, url.QueryEscape(query))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", c.userAgent)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
 	var idRegex *regexp.Regexp
 	switch sType {
 	case TypeAlbum:
@@ -178,6 +323,52 @@ func (c *Client) searchPublic(ctx context.Context, query string, sType ResourceT
 		idRegex = playlistLinkRegex
 	default:
 		idRegex = trackLinkRegex
+	}
+
+	// Spotify has no official unauthenticated search API. The regular
+	// DuckDuckGo HTML endpoint is frequently terminated by bot protection in
+	// containers, while its lightweight endpoint stays server-rendered and
+	// exposes the same public Spotify links. Keep the old endpoint as a
+	// fallback: this is a zero-config metadata discovery path, not a source of
+	// audio or account credentials.
+	searchURLs := []string{
+		fmt.Sprintf("https://lite.duckduckgo.com/lite/?q=site:open.spotify.com/%s+%s", sType, url.QueryEscape(query)),
+		fmt.Sprintf("https://html.duckduckgo.com/html/?q=site:open.spotify.com/%s+%s", sType, url.QueryEscape(query)),
+	}
+	var body []byte
+	var lastErr error
+	for _, searchURL := range searchURLs {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("User-Agent", c.userAgent)
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		candidate, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			lastErr = fmt.Errorf("public Spotify search returned HTTP %d", resp.StatusCode)
+			continue
+		}
+		body = candidate
+		if len(idRegex.FindAllSubmatch(body, -1)) > 0 {
+			break
+		}
+	}
+	if len(body) == 0 {
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, fmt.Errorf("public Spotify search returned no response")
 	}
 
 	matches := idRegex.FindAllSubmatch(body, -1)
