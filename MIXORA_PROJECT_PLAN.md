@@ -484,7 +484,10 @@ empty, error, offline, keyboard и responsive, после чего пишетс�
 
 ## 12. Управление состоянием клиента
 
-Текущий `AppContext` делится постепенно, без big-bang переписывания:
+`AppContext` делится постепенно, без big-bang переписывания. Уже вынесены
+browser-library persistence, listener event queue, а также независимые
+server/offline synchronizers для preferences, history и playlists; внешний
+контракт `useApp()` при этом сохранён:
 
 - `AuthProvider`: session, profile, login/register/logout.
 - `LibraryProvider`: likes, playlists, history, offline queue mutations.
@@ -620,7 +623,11 @@ dislike исключает трек, early skip влияет мягко.
 
 ### P4 — UI migration и дизайн-система
 
-- [ ] Разбить AppContext.
+- [x] Вынести browser-library persistence, listener event queue и durable
+  synchronizers preferences/history/playlists из `AppContext`, сохранив его
+  как совместимый фасад для UI.
+- [ ] Продолжить разделение оставшихся auth/catalog/player/Wave-координаторов
+  без одновременной замены публичного `useApp()`-контракта.
 - [ ] Заменить хешированные reference-классы semantic-компонентами.
 - [ ] Реализовать сценарии C/D и состояния ошибок.
 - [ ] Visual regression на ключевых размерах.
@@ -826,6 +833,10 @@ dislike исключает трек, early skip влияет мягко.
   После появления подтверждённого `source:id` outbox сам сбрасывает terminal
   skip и повторно публикует актуальное состояние; обычные delivered записи не
   переигрываются.
+- 2026-10-05: `AppContext` начал безопасно распадаться на узкие state-модули:
+  browser library, listener events, preferences, history и playlists. Очереди,
+  user-id fences и внешний фасад не менялись; player/Wave/auth остаются
+  следующими отдельными этапами.
 
 ## 19. Definition of Done всего проекта
 

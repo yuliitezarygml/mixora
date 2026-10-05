@@ -28,7 +28,9 @@ Electron использует сборку `dist`, проксирует HTTP/Web
 
 - `src/components` — меню, плеер, карточки, модальные окна, исходная анимация волны.
 - `src/pages` — главная, поиск, коллекция, детали, тематические разделы, настройки.
-- `src/state/AppContext.jsx` — сессия, плеер, очередь, библиотека и настройки.
+- `src/state/AppContext.jsx` — совместимый фасад сессии, плеера, очереди,
+  Wave и настроек; durable library/event/preferences/history/playlists state
+  вынесен в узкие модули `src/state/`.
 - `src/lib` — HTTP-клиент, нормализация треков, маршруты и операции с коллекцией.
 - `public/_next/static/css` — неизменённые таблицы стилей исходного клиента.
 - `public/styles/fonts.css`, `public/fonts`, `public/assets` — оригинальные шрифты, SVG и медиа.
