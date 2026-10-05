@@ -382,6 +382,31 @@ input[type="range"] {
   color: #ffdad6;
   border-radius: 8px 8px 0 0;
   font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.player-error-retry {
+  color: inherit;
+  flex: none;
+  font-weight: 700;
+}
+.connection-banner {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  z-index: 100;
+  max-width: min(640px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  border: 1px solid #c99152;
+  border-radius: 10px;
+  background: #3b2b1c;
+  box-shadow: 0 10px 32px #0006;
+  color: #ffe7c2;
+  padding: 11px 16px;
+  text-align: center;
+  font-size: 13px;
 }
 .page-heading {
   display: flex;

@@ -119,6 +119,47 @@ func TestAppAPIContract(t *testing.T) {
 		}
 	})
 
+	t.Run("extractor and Connect routes require a session and exact methods", func(t *testing.T) {
+		response := request(t, &http.Client{}, http.MethodGet, server.URL+"/api/v1/extract?url=https://www.youtube.com/watch?v=jNQXAC9IVRw", nil)
+		assertStatus(t, response, http.StatusUnauthorized)
+		closeResponse(t, response)
+
+		for _, path := range []string{
+			"/api/v1/extract?url=https://www.youtube.com/watch?v=jNQXAC9IVRw",
+			"/api/v1/youtube/search?q=fixture",
+			"/api/v1/youtube/stream?id=jNQXAC9IVRw",
+			"/api/v1/bandcamp/resolve?url=https://artist.bandcamp.com/track/fixture",
+			"/api/v1/vk/resolve?url=https://vk.com/video1_2",
+			"/api/v1/spotify/connect/status",
+			"/api/v1/spotify/connect/info",
+		} {
+			response = request(t, client, http.MethodGet, server.URL+path, nil)
+			assertStatus(t, response, http.StatusTeapot)
+			if response.Header.Get("X-Contract-Music-Engine") != "reached" {
+				t.Fatalf("protected route %s did not reach music engine", path)
+			}
+			closeResponse(t, response)
+		}
+
+		response = request(t, client, http.MethodPost, server.URL+"/api/v1/extract", nil)
+		assertStatus(t, response, http.StatusMethodNotAllowed)
+		if response.Header.Get("Allow") != http.MethodGet {
+			t.Fatalf("extract Allow = %q, want GET", response.Header.Get("Allow"))
+		}
+		closeResponse(t, response)
+
+		response = request(t, client, http.MethodPost, server.URL+"/api/v1/spotify/connect/player/play", nil)
+		assertStatus(t, response, http.StatusTeapot)
+		closeResponse(t, response)
+
+		response = request(t, client, http.MethodGet, server.URL+"/api/v1/spotify/connect/player/play", nil)
+		assertStatus(t, response, http.StatusMethodNotAllowed)
+		if response.Header.Get("Allow") != http.MethodPost {
+			t.Fatalf("Connect Allow = %q, want POST", response.Header.Get("Allow"))
+		}
+		closeResponse(t, response)
+	})
+
 	t.Run("library get and put", func(t *testing.T) {
 		response := request(t, client, http.MethodGet, server.URL+"/api/v1/library", nil)
 		assertStatus(t, response, http.StatusOK)

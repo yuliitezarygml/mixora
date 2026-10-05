@@ -46,7 +46,10 @@ export function tasteQuery(library = {}) {
     const text = typeof item === "string" ? item : item?.query || item?.title;
     if (text) names.push(String(text));
   }
-  for (const track of [...(library.history || []), ...(library.likes || [])].slice(0, 12)) {
+  for (const track of [
+    ...(library.history || []),
+    ...(library.likes || []),
+  ].slice(0, 12)) {
     if (track?.artist) names.push(track.artist);
   }
   const counts = new Map();

@@ -1,4 +1,14 @@
-# Полное техническое руководство и документация: Universal Music Backend & Go SDK
+# Архивные заметки SDK: Universal Music Backend & Go SDK
+
+> ⚠️ Этот файл сохраняет исторические примеры SDK и не является контрактом
+> текущего Mixora HTTP API. Актуальные маршруты, авторизация и production
+> ограничения описаны в [`README.md`](README.md) и
+> [`../MIXORA_PROJECT_PLAN.md`](../MIXORA_PROJECT_PLAN.md). В частности,
+> `/api/v1/extract`, YouTube, Bandcamp, VK и Spotify Connect control routes
+> требуют Mixora cookie-сессию; HTTP API принимает только allowlist HTTPS URL
+> YouTube, отдельных Bandcamp `/track/…` и публичных VK/VK Video media, а не
+> «1000+ сайтов». Примеры ниже без cookie — архивные и не предназначены для
+> копирования в production.
 
 > **Проект:** Universal Music Backend & Go SDK  
 > **Интегрированные сервисы:** SoundCloud v2, Spotify & Librespot Connect, Universal Media Extractor (`yt-dlp`: YouTube, YouTube Music, Bandcamp, VK и др.)  
@@ -501,10 +511,13 @@ curl -X POST http://localhost:8080/api/v1/spotify/connect/player/volume \
 
 ---
 
-### 5.4 Universal Extractor API (YouTube, VK, Bandcamp)
+### 5.4 Архивный Universal Extractor API (YouTube, VK, Bandcamp)
 
-#### 1. Универсальное извлечение любого медиа (`/api/v1/extract`)
-Поддерживает ссылки YouTube, YouTube Music, Bandcamp, ВКонтакте и ещё 1000+ сайтов. Автоматически извлекает метаданные, все доступные битрейты звука (Opus, AAC, MP3, FLAC) и тексты песен.
+#### 1. Извлечение разрешённого медиа (`/api/v1/extract`)
+Текущий Mixora HTTP API принимает только авторизованный запрос с allowlist URL:
+YouTube/YouTube Music video, Bandcamp `/track/…` или публичная VK/VK Video
+media-страница. Формат, bitrate и доступность медиа определяет провайдер;
+краткоживущая media-ссылка не является persistent contract.
 
 ```bash
 curl -X GET "http://localhost:8080/api/v1/extract?url=https://www.youtube.com/watch?v=CiOZ90sDmik"

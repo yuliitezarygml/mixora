@@ -54,7 +54,7 @@ export default function Home() {
           {app.waveActive && app.current && (
             <p className="wave-note">
               <Icon name="vibe_xxs" size={16} />
-              {waveExplanation(app.waveModelVersion)}
+              {waveExplanation(app.waveModelVersion, app.waveFallback)}
             </p>
           )}
         </div>

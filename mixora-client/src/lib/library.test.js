@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   duration,
   entityKey,
+  findKnownTrack,
+  trackKey,
   uniqueTracks,
   shuffleTracks,
   libraryPayload,
@@ -23,10 +25,30 @@ test("provider IDs remain distinct", () => {
     2,
   );
 });
+test("track key ignores a query-only history entry", () => {
+  assert.equal(trackKey(undefined), "");
+  assert.equal(trackKey({ source: "spotify", id: "same" }), "spotify:same");
+});
 test("provider-aware entity keys preserve legacy SoundCloud saves", () => {
   assert.equal(entityKey({ source: "spotify", id: "same" }), "spotify:same");
   assert.equal(entityKey({ source: "bandcamp", id: "same" }), "bandcamp:same");
   assert.equal(entityKey({ id: "legacy" }), "soundcloud:legacy");
+});
+test("known tracks survive a reload through provider-aware playlist snapshots", () => {
+  const bandcamp = {
+    source: "bandcamp",
+    id: "release-1",
+    title: "Saved release",
+    artist: "Artist",
+    permalink: "https://artist.bandcamp.com/track/saved-release",
+  };
+  const found = findKnownTrack(
+    [{ source: "soundcloud", id: "release-1", title: "Different track" }],
+    { playlists: [{ id: "playlist", tracks: [bandcamp] }] },
+    "bandcamp",
+    "release-1",
+  );
+  assert.deepEqual(found, bandcamp);
 });
 test("library payload keeps server limits", () => {
   const payload = libraryPayload({

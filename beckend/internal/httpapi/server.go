@@ -152,8 +152,49 @@ func (s *Server) handler(musicEngine http.Handler) http.Handler {
 	mux.Handle("POST /api/v1/wave", s.requireAuth(http.HandlerFunc(s.wave)))
 	mux.Handle("POST /api/v1/wave/{sessionId}/feedback", s.requireAuth(http.HandlerFunc(s.waveFeedback)))
 	mux.Handle("GET /api/v1/playback/ws", s.requireAuth(http.HandlerFunc(s.playbackWebSocket)))
-	mux.Handle("/", musicEngine)
+	// The legacy music router remains a separate module, but expensive
+	// extraction and Spotify Connect are account-bound capabilities. In
+	// particular, they must never be anonymously reachable when a local
+	// development runtime has opted into provider cookies. Keep the public
+	// metadata routes compatible while putting these control paths behind the
+	// same server-side session boundary as the rest of Mixora.
+	mux.Handle("/", s.protectedMusicEngine(musicEngine))
 	return middleware(mux)
+}
+
+// protectedMusicEngine adds application-level access policy without coupling
+// the reusable music engine to auth/session storage. The returned method is
+// deliberately exact so a GET-only extractor cannot be invoked through an
+// undocumented POST (or vice versa for Connect control).
+func (s *Server) protectedMusicEngine(musicEngine http.Handler) http.Handler {
+	authenticated := s.requireAuth(musicEngine)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, protected := protectedMusicRoute(r.URL.Path)
+		if !protected {
+			musicEngine.ServeHTTP(w, r)
+			return
+		}
+		if r.Method != method {
+			w.Header().Set("Allow", method)
+			writeError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Этот маршрут не поддерживает такой HTTP-метод")
+			return
+		}
+		authenticated.ServeHTTP(w, r)
+	})
+}
+
+func protectedMusicRoute(path string) (method string, protected bool) {
+	switch path {
+	case "/api/v1/extract", "/api/v1/youtube/search", "/api/v1/youtube/stream", "/api/v1/bandcamp/resolve", "/api/v1/vk/resolve":
+		return http.MethodGet, true
+	case "/api/v1/spotify/connect/status", "/api/v1/spotify/connect/info":
+		return http.MethodGet, true
+	default:
+		if strings.HasPrefix(path, "/api/v1/spotify/connect/player/") {
+			return http.MethodPost, true
+		}
+		return "", false
+	}
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {

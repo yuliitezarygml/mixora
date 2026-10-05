@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  ApiError,
   api,
   catalogResource,
   getTrackPlayback,
@@ -11,6 +12,7 @@ import {
   searchSpotifyCatalog,
   searchYouTubeCatalog,
   resolveExternalTrack,
+  presentRequestFailure,
   spotifyTrack,
   soundcloudPlaylist,
   soundcloudResourceId,
@@ -109,6 +111,99 @@ test("api reads a structured application error", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("api normalizes network failures without treating aborts as errors", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new TypeError("Failed to fetch");
+  };
+  try {
+    await assert.rejects(
+      () => api("/search?q=test"),
+      (error) =>
+        error instanceof ApiError &&
+        error.status === 0 &&
+        error.code === "network_unavailable" &&
+        /сервером/.test(error.message),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const aborted = new Error("Request aborted");
+  aborted.name = "AbortError";
+  globalThis.fetch = async () => {
+    throw aborted;
+  };
+  try {
+    await assert.rejects(
+      () => api("/search?q=test"),
+      (error) => error === aborted,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("api hides upstream diagnostics and error presentation stays actionable", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        error: "ERROR: provider returned a temporary signed media URL",
+      }),
+      { status: 502, headers: { "Content-Type": "application/json" } },
+    );
+  try {
+    await assert.rejects(
+      () => api("/extract?url=https%3A%2F%2Fexample.test"),
+      (error) =>
+        error.status === 502 &&
+        /Источник временно/.test(error.message) &&
+        !/SoundCloud|signed media/i.test(error.message),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const offline = presentRequestFailure(
+    new ApiError("raw browser failure", 0, { code: "network_unavailable" }),
+    { source: "spotify", online: false },
+  );
+  assert.deepEqual(
+    { kind: offline.kind, title: offline.title, retryable: offline.retryable },
+    {
+      kind: "offline",
+      title: "Нет подключения к интернету",
+      retryable: true,
+    },
+  );
+
+  const signIn = presentRequestFailure(new ApiError("session expired", 401), {
+    source: "youtube",
+  });
+  assert.equal(signIn.action, "sign-in");
+  assert.equal(signIn.retryable, false);
+
+  const throttled = presentRequestFailure(new ApiError("", 429), {
+    source: "bandcamp",
+  });
+  assert.equal(throttled.kind, "rate-limit");
+  assert.equal(throttled.retryable, true);
+
+  const unavailable = presentRequestFailure(new ApiError("", 503), {
+    source: "vk",
+  });
+  assert.match(unavailable.title, /VK временно недоступен/);
+  assert.equal(unavailable.retryable, true);
+
+  const invalidLink = presentRequestFailure(
+    new ApiError("Вставьте полную ссылку на трек или видео.", 400),
+    { source: "external" },
+  );
+  assert.equal(invalidLink.text, "Вставьте полную ссылку на трек или видео.");
+  assert.equal(invalidLink.retryable, false);
 });
 
 test("extracts the numeric backend id from ids and SoundCloud URNs", () => {

@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/iulian/soundcloud-go/pkg/spotify"
+	spotifymodels "github.com/iulian/soundcloud-go/pkg/spotify/models"
 )
 
 // SpotifyResolveHandler handles GET /api/v1/spotify/resolve?url=...
@@ -35,8 +37,30 @@ func (h *Handler) SpotifyResolveHandler(w http.ResponseWriter, r *http.Request) 
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.observeSpotifyResource(r.Context(), res)
 
 	JSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) observeSpotifyResource(ctx context.Context, resource any) {
+	switch value := resource.(type) {
+	case *spotifymodels.Track:
+		if value != nil {
+			h.observeSpotifyTrack(ctx, *value)
+		}
+	case *spotifymodels.Album:
+		if value != nil {
+			h.observeSpotifyTracks(ctx, value.Tracks)
+		}
+	case *spotifymodels.Artist:
+		if value != nil {
+			h.observeSpotifyTracks(ctx, value.TopTracks)
+		}
+	case *spotifymodels.Playlist:
+		if value != nil {
+			h.observeSpotifyTracks(ctx, value.Tracks)
+		}
+	}
 }
 
 // SpotifyTrackHandler handles GET /api/v1/spotify/tracks/{id}

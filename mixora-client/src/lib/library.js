@@ -1,4 +1,14 @@
-export const trackKey = (t) => `${t.source}:${t.id}`;
+// Track identity is used while reconciling optimistic browser state. Return an
+// empty key for a malformed/legacy UI entry rather than throwing while a user
+// clicks a valid nearby result (search history also contains query-only rows).
+export const trackKey = (track) => {
+  if (!track || typeof track !== "object") return "";
+  const source = String(track.source ?? "")
+    .trim()
+    .toLowerCase();
+  const id = String(track.id ?? "").trim();
+  return source && id ? `${source}:${id}` : "";
+};
 
 // Collections contain more than tracks. Keep their identity provider-aware as
 // well: Spotify, SoundCloud and an imported source can legitimately expose
@@ -11,6 +21,32 @@ export function entityKey(entity, fallbackSource = "soundcloud") {
     .toLowerCase();
   const id = String(entity.id ?? "").trim();
   return source && id ? `${source}:${id}` : "";
+}
+
+// A track detail route can outlive the transient search catalog. Rebuild its
+// compact render/playback model from durable user-owned snapshots too, while
+// retaining a strict provider-aware identity check so same-shaped IDs from two
+// catalogs never bleed into each other.
+export function findKnownTrack(catalog, library, source, id) {
+  const key = entityKey({ source, id });
+  if (!key) return null;
+  const state = library && typeof library === "object" ? library : {};
+  const candidates = [
+    ...(Array.isArray(catalog) ? catalog : []),
+    ...(Array.isArray(state.likes) ? state.likes : []),
+    ...(Array.isArray(state.dislikes) ? state.dislikes : []),
+    ...(Array.isArray(state.history) ? state.history : []),
+    ...(Array.isArray(state.playlists)
+      ? state.playlists.flatMap((playlist) => playlist?.tracks || [])
+      : []),
+    ...(Array.isArray(state.listens)
+      ? state.listens.map((listen) => listen?.track || listen)
+      : []),
+    ...(Array.isArray(state.searches)
+      ? state.searches.map((entry) => entry?.track).filter(Boolean)
+      : []),
+  ];
+  return candidates.find((track) => entityKey(track) === key) || null;
 }
 
 export function duration(seconds) {

@@ -1,6 +1,6 @@
 # Mixora — генеральный план разработки и миграции
 
-Статус документа: рабочий план, версия 4 от 2026-10-03.
+Статус документа: рабочий план, версия 5 от 2026-10-04.
 
 Этот файл — главная точка входа в проект. Он описывает фактическое состояние
 локальных исходников, целевую архитектуру, порядок миграции интерфейса, контракт
@@ -49,6 +49,10 @@ Mixora — настольный и веб-клиент музыкального 
 - Клиент уже ожидает прикладной API (`/auth`, `/me`, `/library`, `/wave`,
   `/playback/ws`). Музыкальные запросы нужно подключить к фактическому контракту
   готового backend, не вводя новый provider-specific слой.
+- Один source-aware adapter уже объединяет SoundCloud, Spotify preview,
+  YouTube/YouTube Music и разрешённые внешние ссылки VK/Bandcamp. Устойчивая
+  страница источника хранится в библиотеке и очереди; временный CDN URL всегда
+  запрашивается заново и не попадает в persistence.
 - Electron использует фиксированный loopback-origin `127.0.0.1:5174` и не
   откатывается на случайный порт. Поэтому cookie и origin-scoped storage
   сохраняются между production-запусками; занятый порт приводит к явной ошибке.
@@ -85,15 +89,20 @@ Mixora — настольный и веб-клиент музыкального 
 ## 4. Главные архитектурные правила
 
 1. Клиент зависит от стабильного Mixora API и не знает о provider credentials,
-   внутренних source ID и способе получения аудио.
+   внутренней грамматике URL или способе получения аудио. Устойчивая identity
+   сущности — provider-neutral пара `source:id`; она никогда не является
+   секретом или временной media-ссылкой.
 2. Готовый музыкальный engine остаётся источником музыки, поиска, метаданных и
-   текстов. Прикладной backend хранит только устойчивую ссылку `track_ref`,
-   которую возвращает engine; отдельный provider rewrite не планируется.
+   текстов. Прикладной backend хранит каноническую пару `source:id` и компактный
+   metadata snapshot, который возвращает единый adapter; отдельный provider
+   rewrite внутри компонентов или таблиц не планируется.
 3. Авторизация серверная: пароль хранится как Argon2id-хеш, сессия — в БД,
    браузер получает случайный `HttpOnly` cookie.
 4. Секреты и временные URL аудиопотоков не сохраняются в клиенте. Внешние
    provider credentials, если они вообще нужны внутри engine, не входят в
    публичную конфигурацию прикладного слоя.
+   Общий cookies-файл внешнего провайдера запрещён в multi-user API; он может
+   быть включён только явно для локальной single-user разработки.
 5. Любое действие, влияющее на рекомендации, записывается как событие, а не
    вычисляется только по текущему JSON библиотеки.
 6. Рекомендации — гибридный ранжировщик. LLM не нужна для выбора следующего
@@ -177,11 +186,12 @@ beckend/
 
 - Каталог, музыка, метаданные и тексты принадлежат готовому music engine и не
   дублируются обязательной схемой `tracks`/`track_sources`.
-- Пользовательские таблицы хранят непрозрачный `track_ref`, полученный от
-  engine. Компоненты не разбирают и не собирают provider ID: единственный
-  music API-adapter канонизирует только известные legacy SoundCloud
-  URN/path-like ссылки перед попаданием в очередь. Та же ограниченная
-  нормализация есть на API-границе и в миграциях, а не рассеяна по UI.
+- Пользовательские таблицы хранят каноническую provider-neutral пару
+  `source:id`, полученную от единственного music API-adapter. Компоненты не
+  разбирают и не собирают provider URL/credentials: adapter нормализует legacy
+  SoundCloud URN/path-like значения и приводит Spotify/yt-dlp результаты к
+  общей форме перед очередью, API и persistence. Нормализация не рассеяна по
+  UI, а временная media URL никогда не сохраняется.
 - Для истории и устойчивого UI разрешён небольшой metadata snapshot: название,
   исполнитель, обложка и длительность на момент события.
 - `track_catalog`: provider-neutral metadata snapshot, подготовленный текст,
@@ -296,9 +306,10 @@ likes/dislikes, историю и собственные плейлисты. П�
 - На P2 фактические маршруты и payload фиксируются contract tests. Если UI нужна
   единая форма, тонкий app facade или mapper адаптирует ответ без переписывания
   engine и без provider-specific URL в компонентах.
-- Клиент обращается с непрозрачным `track_ref` и использует заявленный engine
-  способ воспроизведения. Разбор единственного legacy SoundCloud формата
-  изолирован в music API-adapter, а не повторяется в компонентах.
+- Клиент передаёт `source:id` и стабильный permalink через единый music
+  API-adapter, а способ воспроизведения определяется source-specific adapter-ом.
+  SoundCloud legacy, Spotify и yt-dlp provider normalization изолированы там,
+  а не повторяются в компонентах; media URL всегда заново выдаёт engine.
 
 ### События и рекомендации
 
@@ -352,7 +363,10 @@ Apple M2/24 GB без CUDA.
 3. Похожие жанры, артисты и теги текущего трека.
 4. Content embeddings текста; позднее — аудио embeddings (например, CLAP).
 5. Популярное с затуханием по времени.
-6. Контролируемая доля exploration для новых треков и артистов.
+6. До 100 свежих доступных provider-neutral snapshots `track_catalog`
+   (SoundCloud, Spotify preview, YouTube, Bandcamp, VK) как независимый
+   fallback/novelty pool.
+7. Контролируемая доля exploration для новых треков, артистов и sources.
 
 ### Ранжирование и ограничения
 
@@ -402,7 +416,8 @@ empty, error, offline, keyboard и responsive, после чего пишетс�
 - [x] Реальный register/login/logout/session.
 - [x] Backend verify email и password reset через SMTP outbox.
 - [x] Добавить формы UI для подтверждения email и password reset.
-- [ ] Loading/error/offline состояния.
+- [~] Controlled loading/error/offline для каталога, источников, Wave и
+  плеера реализованы; остаётся полный ручной audit форм и desktop-сценария.
 - [x] Безопасное переключение аккаунта без токена в localStorage.
 - [ ] Splash показывается только до готовности session + initial data.
 
@@ -563,7 +578,17 @@ app-layer `.env`: music engine сам инкапсулирует свою гот
 - [x] Закрепить рабочий контракт contract/regression тестами без переделки
   engine и без конструирования provider ID в app layer.
 - [x] Подключить один API/mapper клиента к фактическому контракту.
-- [ ] Проверить timeout, unavailable track, offline и controlled error states.
+- [x] Сделать source-aware клиентский adapter для SoundCloud, Spotify,
+  YouTube/YouTube Music, VK и Bandcamp: source входит в ключ сущности,
+  history/плейлисты и player snapshot сохраняют permalink, а Spotify в
+  браузере воспроизводит только легально доступное preview.
+- [x] Ограничить yt-dlp границей авторизации и allowlist-ом разрешённых HTTPS
+  URL; внедрить timeout и лимит параллельных subprocess-ов. Named Bandcamp
+  endpoint принимает только `/track/…`; album import остаётся будущей задачей.
+- [x] Проверить timeout, unavailable track, offline и controlled error states:
+  transport нормализует network/HTTP failures, yt-dlp не отдаёт stderr клиенту,
+  каталог показывает source-aware recovery, а playback retry заново получает
+  временную media URL.
 - [ ] Пройти Search → play → next → like → reopen в браузере и Electron.
 
 Критерий: существующая выдача музыки и SoundCloud подтверждена тестами и
@@ -582,6 +607,12 @@ app-layer `.env`: music engine сам инкапсулирует свою гот
   состояние coalesced, `neutral` снимает оба feedback-сигнала.
 - [x] Отправка поисковых запросов и impressions результатов поиска.
 - [x] Диагностическое объяснение выбранного model path в UI.
+- [x] Дать Wave provider-neutral fallback из свежего `track_catalog`, чтобы
+  в каждом запросе смешивались до 100 ранее наблюдённых nonblocked
+  SoundCloud/Spotify preview/YouTube/Bandcamp/VK-кандидатов. Такие
+  fallback-записи не обновляют собственную свежесть при каждой выдаче; если
+  collaborative page целиком одного source, до 10% позиций резервируются для
+  доступных новых source из catalog.
 - [ ] Метрики качества и причины ranking для каждого трека.
 
 Критерий: два пользователя с разной историей получают разные подборки;
@@ -601,7 +632,8 @@ dislike исключает трек, early skip влияет мягко.
 ### P5 — рекомендации V2 и качество каталога
 
 - [x] Канонизировать legacy SoundCloud URN/path-like refs на границах API,
-  событий, Wave и существующих записей БД.
+  событий, Wave и существующих user/event записей БД; catalog reads/writes
+  также приводят остаточные legacy keys к канонической паре.
 - [x] Добавить provider-neutral metadata snapshots, hash содержимого и durable
   очередь пересчёта без повторной индексации неизменившихся треков.
 - [x] Добавить pgvector, 768-мерные text embeddings и HNSW cosine lookup.
@@ -611,6 +643,18 @@ dislike исключает трек, early skip влияет мягко.
   пользователя без достаточной истории.
 - [x] Давать сохранённому desired state приоритет над устаревшими
   `like`/`dislike`-событиями в Wave и content taste.
+- [x] Перед публикацией preference feedback в Gorse сверять external `source:id`
+  с server-side catalog: в Gorse попадает только подтверждённый catalog snapshot,
+  а неизвестный `liked`/`disliked` client snapshot остаётся локальным desired
+  state и не становится recommendation item. Неизвестный `neutral` удаляет
+  только возможный старый Gorse feedback без создания item.
+- [x] После первого наблюдения подтверждённого track автоматически
+  переотправлять ранее catalog-unverified `liked`/`disliked` preference;
+  нормальные source-responses каталогизируются до клика, а offline/legacy
+  состояние получает отдельную durable reconciliation-метку.
+- [x] Применить такую же server-side catalog-проверку к general listening events
+  до их Gorse-проекции: неизвестное событие остаётся в PostgreSQL, но не может
+  создать Gorse item; Wave feedback дополнительно связан с server-side impression.
 - [ ] Добавить и оценить CLAP/audio embeddings.
 - [ ] Cold-start onboarding в UI и управляемая exploration.
 - [ ] Offline evaluation и A/B-ready assignment.
@@ -619,6 +663,10 @@ dislike исключает трек, early skip влияет мягко.
 
 - [ ] Стабильный app protocol/origin, IPC и deep links.
 - [ ] Production reverse proxy/TLS/SMTP/secrets/backups.
+- [ ] Перед внешним доступом добавить trusted-origin CSRF-проверку для
+  cookie-auth mutation и настроить reverse proxy так, чтобы Origin не терялся.
+- [ ] Спроектировать per-user external-provider authorization; общий
+  yt-dlp cookies-file не является production-решением.
 - [ ] Подпись установщика, обновления и release checklist.
 - [ ] Privacy/export/delete account и лицензии источников.
 
@@ -640,15 +688,18 @@ dislike исключает трек, early skip влияет мягко.
 аккаунтные плейлисты уже реализованы.
 Следующая последовательность:
 
-1. Разделить `AppContext`, закончить сценарии каталога и состояния
-   loading/error/offline; проверить Search → play → next → like → reopen в
-   браузере и Electron.
-2. Добавить метрики recommendation quality/latency, offline evaluation и
+1. Закончить controlled error/offline-состояния multi-source каталога и вручную
+   проверить Search → play → next → like → reopen для SoundCloud, Spotify
+   preview, YouTube, VK и Bandcamp в браузере и Electron.
+2. Разделить `AppContext`, выделив auth/catalog/library/player sync в узкие
+   state-модули без изменения публичного контракта.
+3. Добавить метрики recommendation quality/latency, offline evaluation и
    объяснение причины для отдельного трека.
-3. Реализовать управляемую exploration и cold-start onboarding в UI.
-4. Исследовать CLAP/audio embeddings только после сравнения с уже работающими
+4. Реализовать управляемую exploration и cold-start onboarding в UI.
+5. Исследовать CLAP/audio embeddings только после сравнения с уже работающими
    text embeddings на накопленных событиях.
-5. Закрыть desktop deep links/IPC и production TLS/SMTP/secrets/backups.
+6. Закрыть desktop deep links/IPC и production TLS/SMTP/secrets/backups,
+   including trusted-origin CSRF и per-user provider auth design.
 
 Метрики, полноценные error/offline-сценарии, пользовательский merge
 одновременных правок и production-подготовка остаются незавершёнными и не
@@ -732,11 +783,49 @@ dislike исключает трек, early skip влияет мягко.
   provider-канонизацию в одном music API-adapter и не дублирует SoundCloud
   grammar по компонентам.
 - 2026-10-04: клиент сохраняет короткое account-scoped продолжение «Моей
-  волны»: preferences/context/round и mapping `track_ref → session_id`.
+  волны»: preferences/context/round и mapping `source:id → session_id`.
   После перезапуска восстанавливаются только mappings треков из сохранённой
   очереди, а сервер всё равно проверяет ownership через impressions. Очередь
   плеера и desktop WebSocket теперь всегда передают окно, содержащее текущий
   трек, даже после 30-й позиции.
+- 2026-10-04: source-aware adapter расширен на Spotify preview, YouTube/YouTube
+  Music и разрешённые VK/Bandcamp URL. Сохранённые external треки переживают
+  reload/desktop sync по permalink и повторно получают временный media URL
+  только на play; прямой URL и provider cookies не сохраняются.
+- 2026-10-04: Wave получила provider-neutral fallback из `track_catalog` и
+  миграцию `012_wave_catalog_candidates.sql`. Catalog-кандидаты не
+  перезаписываются при выдаче, поэтому recent window не замыкается на себе.
+  yt-dlp/Spotify Connect resource endpoints защищены Mixora session, URL
+  allowlist проверяет provider-specific маршруты, а extractor имеет bounded
+  timeout/concurrency. Shared yt-dlp cookies запрещены вне явно отмеченной
+  local development конфигурации.
+- 2026-10-04: live API E2E показал, что полный Gorse page из SoundCloud может
+  визуально вытеснить catalog fallback. Wave теперь детерминированно сохраняет
+  до 10% page для доступных ранее отсутствовавших provider sources, по одному
+  треку на source; это ограниченная source-diversity exploration, а не отказ
+  от персонального Gorse ranking.
+- 2026-10-04: controlled failure/offline слой закрыт автоматическими тестами:
+  клиент различает отсутствие сети, session, rate limit, недоступный источник
+  и неверную ссылку без показа browser/provider diagnostics. Плеер повторно
+  разрешает permalink, а не использует истёкшую CDN URL; fallback Wave явно
+  показывает локальную подборку. yt-dlp timeout теперь сохраняет typed cause и
+  возвращает 502/503/504 с безопасным сообщением вместо stderr процесса.
+- 2026-10-04: preference outbox перед публикацией `liked`/`disliked` в Gorse
+  повторно сверяет `source:id` с `track_catalog` и использует только его
+  metadata snapshot. Неизвестная запись остаётся локальным выбором и
+  terminal-skip для Gorse; `neutral` безопасно удаляет возможный legacy
+  feedback без создания item, а временная ошибка каталога ретраится. Все
+  успешные SoundCloud track/resolve/chart/related/playlist-ответы теперь также
+  каталогизируются до пользовательской реакции.
+- 2026-10-05: general event projector получил ту же catalog-проверку перед
+  Gorse. Подтверждённые события создают item только из server-side metadata,
+  неизвестные сохраняются в журнале продукта, но terminal-skip для Gorse;
+  недоступный catalog оставляет batch retryable.
+- 2026-10-05: migration `013_preference_catalog_reconciliation.sql` добавила
+  durable marker для positive preference, пришедшего раньше catalog-наблюдения.
+  После появления подтверждённого `source:id` outbox сам сбрасывает terminal
+  skip и повторно публикует актуальное состояние; обычные delivered записи не
+  переигрываются.
 
 ## 19. Definition of Done всего проекта
 

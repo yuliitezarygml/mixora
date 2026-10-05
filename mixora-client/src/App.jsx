@@ -110,6 +110,12 @@ export default function App() {
   return (
     <div className="app-shell CommonLayout_root__WC_W1 DefaultLayout_root__7J0wo">
       <SplashScreen />
+      {!a.online && (
+        <div className="connection-banner" role="status">
+          Нет подключения. Изменения в библиотеке сохранятся и синхронизируются
+          после восстановления сети.
+        </div>
+      )}
       <Sidebar onCreate={() => setCreate(true)} />
       <main
         className={`main-surface CommonLayout_content__zy_Ja route-${kind}`}

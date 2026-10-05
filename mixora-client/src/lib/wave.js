@@ -30,7 +30,9 @@ export const waveLanguages = [
   ["instrumental", "Без слов"],
 ];
 
-export function waveExplanation(modelVersion) {
+export function waveExplanation(modelVersion, fallback = false) {
+  if (fallback)
+    return "Серверная Моя волна временно недоступна — включили локальную подборку";
   const version = String(modelVersion || "");
   const collaborative = version.includes("gorse-");
   const semantic = version.includes("embeddinggemma-");

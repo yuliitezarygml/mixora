@@ -17,6 +17,10 @@ const maxPreferenceOutboxErrorLength = 1000
 
 var (
 	ErrPreferenceOutboxLeaseLost = errors.New("track preference outbox lease is no longer held")
+	// ErrPreferenceTrackUnverified tells the outbox that the product state is
+	// valid but its source:id has not yet been observed by the trusted catalog.
+	// It is terminal for this attempt, not a transient Gorse failure.
+	ErrPreferenceTrackUnverified = errors.New("track preference is not verified by the server catalog")
 	errStalePreferenceOutboxItem = errors.New("track preference outbox item is no longer current")
 )
 
@@ -72,9 +76,11 @@ type PreferenceOutboxWorker struct {
 }
 
 type preferenceOutboxBackend interface {
+	requeueCatalogVerifiedPreferenceOutbox(context.Context, time.Time) error
 	claimPreferenceOutbox(context.Context, time.Time, time.Time, int) ([]preferenceOutboxItem, error)
 	isCurrentPreferenceOutbox(context.Context, preferenceOutboxItem) (bool, error)
 	markPreferenceOutboxDelivered(context.Context, preferenceOutboxItem, time.Time) error
+	markPreferenceOutboxCatalogUnverified(context.Context, preferenceOutboxItem, time.Time) error
 	markPreferenceOutboxFailed(context.Context, preferenceOutboxItem, time.Time, error) error
 }
 
@@ -158,6 +164,9 @@ func (w *PreferenceOutboxWorker) RunOnce(ctx context.Context) (int, error) {
 		defer publicationLease.Release()
 	}
 	now := w.now().UTC()
+	if err := w.outbox.requeueCatalogVerifiedPreferenceOutbox(ctx, now); err != nil {
+		return 0, fmt.Errorf("requeue catalog-verified track preferences: %w", err)
+	}
 	items, err := w.outbox.claimPreferenceOutbox(ctx, now, now.Add(w.options.Lease), w.options.BatchSize)
 	if err != nil {
 		return 0, err
@@ -173,6 +182,12 @@ func (w *PreferenceOutboxWorker) RunOnce(ctx context.Context) (int, error) {
 		if errors.Is(publishErr, errStalePreferenceOutboxItem) {
 			// A newer preference atomically reset this outbox row. It owns the
 			// next delivery attempt, so never retry or mark the stale claim.
+			continue
+		}
+		if errors.Is(publishErr, ErrPreferenceTrackUnverified) {
+			if err := w.outbox.markPreferenceOutboxCatalogUnverified(ctx, item, w.now().UTC()); err != nil {
+				batchErrors = append(batchErrors, fmt.Errorf("mark unverified track preference %s/%s: %w", item.TrackSource, item.TrackID, err))
+			}
 			continue
 		}
 		if publishErr != nil {
@@ -368,6 +383,39 @@ func (o *preferenceOutboxStore) claimPreferenceOutbox(ctx context.Context, now, 
 	return items, nil
 }
 
+// requeueCatalogVerifiedPreferenceOutbox restores only states that were
+// terminal-skipped because their source:id was not in the catalog yet. A
+// normal completed delivery is never reopened, so frequently observed tracks
+// do not create repeated Gorse mutations.
+func (o *preferenceOutboxStore) requeueCatalogVerifiedPreferenceOutbox(ctx context.Context, now time.Time) error {
+	_, err := o.db.Exec(ctx, `
+		UPDATE user_track_preference_outbox AS queued
+		SET delivered_at=NULL,
+			catalog_unverified_at=NULL,
+			available_at=$1,
+			claimed_until=NULL,
+			attempts=0,
+			last_error=NULL,
+			updated_at=$1
+		WHERE queued.catalog_unverified_at IS NOT NULL
+		  AND EXISTS (
+			SELECT 1
+			FROM track_catalog AS catalog
+			WHERE (catalog.track_source = queued.track_source AND catalog.track_id = queued.track_id)
+			   OR (
+				queued.track_source = 'soundcloud'
+				AND LOWER(catalog.track_source) = 'soundcloud'
+				AND catalog.track_id ~ '(^|:|/)[0-9]+$'
+				AND substring(catalog.track_id FROM '([0-9]+)$') = queued.track_id
+			   )
+		  )
+	`, now)
+	if err != nil {
+		return fmt.Errorf("requeue catalog-verified track preferences: %w", err)
+	}
+	return nil
+}
+
 func (o *preferenceOutboxStore) isCurrentPreferenceOutbox(ctx context.Context, item preferenceOutboxItem) (bool, error) {
 	return currentPreferenceOutbox(ctx, o.db, item)
 }
@@ -399,7 +447,7 @@ func currentPreferenceOutbox(ctx context.Context, query preferenceOutboxRowQueri
 func (o *preferenceOutboxStore) markPreferenceOutboxDelivered(ctx context.Context, item preferenceOutboxItem, deliveredAt time.Time) error {
 	result, err := o.db.Exec(ctx, `
 		UPDATE user_track_preference_outbox
-		SET delivered_at=$6, claimed_until=NULL, last_error=NULL, updated_at=$6
+		SET delivered_at=$6, catalog_unverified_at=NULL, claimed_until=NULL, last_error=NULL, updated_at=$6
 		WHERE user_id=$1
 		  AND track_source=$2
 		  AND track_id=$3
@@ -409,6 +457,30 @@ func (o *preferenceOutboxStore) markPreferenceOutboxDelivered(ctx context.Contex
 	`, item.UserID, item.TrackSource, item.TrackID, item.Revision, item.ClaimedUntil, deliveredAt)
 	if err != nil {
 		return fmt.Errorf("mark track preference outbox delivered: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrPreferenceOutboxLeaseLost
+	}
+	return nil
+}
+
+func (o *preferenceOutboxStore) markPreferenceOutboxCatalogUnverified(ctx context.Context, item preferenceOutboxItem, at time.Time) error {
+	result, err := o.db.Exec(ctx, `
+		UPDATE user_track_preference_outbox
+		SET delivered_at=$6,
+			catalog_unverified_at=$6,
+			claimed_until=NULL,
+			last_error='track has not yet been observed in the server catalog',
+			updated_at=$6
+		WHERE user_id=$1
+		  AND track_source=$2
+		  AND track_id=$3
+		  AND revision=$4
+		  AND delivered_at IS NULL
+		  AND claimed_until=$5
+	`, item.UserID, item.TrackSource, item.TrackID, item.Revision, item.ClaimedUntil, at)
+	if err != nil {
+		return fmt.Errorf("mark track preference catalog-unverified: %w", err)
 	}
 	if result.RowsAffected() != 1 {
 		return ErrPreferenceOutboxLeaseLost

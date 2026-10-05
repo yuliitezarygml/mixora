@@ -195,6 +195,7 @@ export default function Discovery() {
       {query && (
         <LoadState
           remote={remote}
+          source="soundcloud"
           empty={
             type === "artists"
               ? !artists.length

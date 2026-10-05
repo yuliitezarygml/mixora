@@ -182,29 +182,71 @@ export default function Search() {
       resultCount: remote.data.tracks.length,
     });
   }, [app.user?.id, kind, q, remote.data, source]);
-  const local = app.catalog.filter((t) =>
-    (t.title + " " + t.artist).toLowerCase().includes(q.toLowerCase()),
-  );
-  const data = remote.data || {
-    tracks: local,
-    artists: [
-      ...new Map(
-        local.map((t) => [
-          t.artistId,
-          { id: t.artistId, name: t.artist, artwork: t.artwork },
-        ]),
-      ).values(),
-    ],
-    playlists: [...app.library.playlists, ...app.library.savedPlaylists].filter(
-      (p) => p.name.toLowerCase().includes(q.toLowerCase()),
-    ),
-  };
+  // A remote source must never fall back to a mixed local cache: otherwise a
+  // guest selecting Spotify/YouTube could see and play unrelated SoundCloud
+  // rows. Only the explicit Mixora-local source renders cached results.
+  const local =
+    source === "local"
+      ? app.catalog.filter((track) =>
+          `${track.title} ${track.artist}`
+            .toLowerCase()
+            .includes(q.toLowerCase()),
+        )
+      : [];
+  const data =
+    remote.data ||
+    (source === "local"
+      ? {
+          tracks: local,
+          artists: [
+            ...new Map(
+              local.map((track) => [
+                `${track.source}:${track.artistId || track.artist}`,
+                {
+                  id: track.artistId,
+                  source: track.source,
+                  name: track.artist,
+                  artwork: track.artwork,
+                },
+              ]),
+            ).values(),
+          ],
+          playlists: [
+            ...app.library.playlists,
+            ...app.library.savedPlaylists,
+          ].filter((playlist) =>
+            playlist.name.toLowerCase().includes(q.toLowerCase()),
+          ),
+        }
+      : { tracks: [], artists: [], playlists: [] });
   const setFilter = (key, value) =>
     setParams((previous) => {
       const next = new URLSearchParams(previous);
       next.set(key, value);
       return next;
     });
+  const setSource = (nextSource) => {
+    const nextDefinition = musicSources.find((item) => item.id === nextSource);
+    setParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set("source", nextSource);
+      if (!nextDefinition?.kinds.includes(kind)) next.set("type", "all");
+      return next;
+    });
+  };
+  const sourceSelector = (
+    <select
+      aria-label="Источник поиска"
+      value={source}
+      onChange={(event) => setSource(event.target.value)}
+    >
+      {musicSources.map((item) => (
+        <option key={item.id} value={item.id}>
+          {item.label}
+        </option>
+      ))}
+    </select>
+  );
   const submit = (e) => {
     e.preventDefault();
     const value = input.trim();
@@ -213,9 +255,13 @@ export default function Search() {
       app.updateLibrary((s) => ({
         ...s,
         searches: [
-          { kind: "query", query: value, title: value },
+          { kind: "query", query: value, title: value, source },
           ...s.searches.filter(
-            (item) => (typeof item === "string" ? item : item.query) !== value,
+            (item) =>
+              (typeof item === "string" ? item : item.query) !== value ||
+              (typeof item === "string"
+                ? "soundcloud"
+                : item.source || "soundcloud") !== source,
           ),
         ].slice(0, 30),
       }));
@@ -239,7 +285,7 @@ export default function Search() {
           track,
         },
         ...state.searches.filter(
-          (item) => trackKey(item?.track) !== trackKey(track),
+          (item) => !item?.track || trackKey(item.track) !== trackKey(track),
         ),
       ].slice(0, 30),
     }));
@@ -284,6 +330,11 @@ export default function Search() {
           Найти
         </button>
       </form>
+      {!q && (
+        <div className="chip-row" role="group" aria-label="Источник поиска">
+          {sourceSelector}
+        </div>
+      )}
       {q
         ? corrected && (
             <p className="search-hint">
@@ -315,30 +366,7 @@ export default function Search() {
                   {label}
                 </button>
               ))}
-            <select
-              aria-label="Источник поиска"
-              value={source}
-              onChange={(e) => {
-                const nextSource = e.target.value;
-                const nextDefinition = musicSources.find(
-                  (item) => item.id === nextSource,
-                );
-                setParams((previous) => {
-                  const next = new URLSearchParams(previous);
-                  next.set("source", nextSource);
-                  if (!nextDefinition?.kinds.includes(kind)) {
-                    next.set("type", "all");
-                  }
-                  return next;
-                });
-              }}
-            >
-              {musicSources.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
+            {sourceSelector}
           </div>
           {!app.user && source !== "local" && (
             <div className="inline-notice">
@@ -348,7 +376,7 @@ export default function Search() {
               </button>
             </div>
           )}
-          <LoadState remote={remote}>
+          <LoadState remote={remote} source={source}>
             {(kind === "all" || kind === "tracks") && (
               <Section title="Треки">
                 <TrackList
@@ -465,10 +493,14 @@ export default function Search() {
                       const text = typeof item === "string" ? item : item.title;
                       const query =
                         typeof item === "string" ? item : item.query || text;
+                      const querySource =
+                        typeof item === "string"
+                          ? "soundcloud"
+                          : item.source || "soundcloud";
                       return (
                         <Link
                           key={`query-${query}-${index}`}
-                          to={`/search?q=${encodeURIComponent(query)}`}
+                          to={`/search?q=${encodeURIComponent(query)}&source=${encodeURIComponent(querySource)}`}
                         >
                           <Icon name="search_m" />
                           <span>

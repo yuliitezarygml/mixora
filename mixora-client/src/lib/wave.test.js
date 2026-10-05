@@ -110,4 +110,8 @@ test("wave explains whether personalization or rules produced the queue", () => 
     /смысловой похожести/,
   );
   assert.match(waveExplanation("rules-v0"), /настроению/);
+  assert.match(
+    waveExplanation("rules-v0", true),
+    /Серверная Моя волна временно недоступна/,
+  );
 });

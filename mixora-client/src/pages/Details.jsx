@@ -19,7 +19,12 @@ import {
   spotifyTrack,
 } from "../lib/api.js";
 import { useRemote } from "../lib/useRemote.js";
-import { duration, uniqueTracks, shuffleTracks } from "../lib/library.js";
+import {
+  duration,
+  findKnownTrack,
+  uniqueTracks,
+  shuffleTracks,
+} from "../lib/library.js";
 import { TrackList } from "../components/Tracks.jsx";
 import {
   ArtistCards,
@@ -62,9 +67,7 @@ export default function Details() {
   const id = params.get("id") || (artist ? app.catalog[0]?.artistId : "");
   const source = params.get("source") || "soundcloud";
   const personal = app.library.playlists.find((p) => p.id === id);
-  const cachedTrack = app.catalog.find(
-    (track) => track.id === id && track.source === source,
-  );
+  const cachedTrack = findKnownTrack(app.catalog, app.library, source, id);
   const remote = useRemote(
     `${app.user?.id}:entity:${source}:${artist || label ? "users" : trackPage ? "tracks" : "playlists"}:${id}`,
     async (signal) => {
@@ -344,7 +347,10 @@ export default function Details() {
             }))}
           />
         )}
-        <LoadState remote={personal ? { loading: false } : remote}>
+        <LoadState
+          remote={personal ? { loading: false } : remote}
+          source={source}
+        >
           {!id || (!entity.name && !entity.title && !tracks.length) ? (
             <Empty
               title="Музыка не найдена"

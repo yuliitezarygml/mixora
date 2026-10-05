@@ -3,13 +3,13 @@ package recommendation
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"sort"
 	"strings"
 
 	"github.com/iulian/soundcloud-go/internal/music"
 	"github.com/iulian/soundcloud-go/pkg/soundcloud"
+	soundcloudmodels "github.com/iulian/soundcloud-go/pkg/soundcloud/models"
 )
 
 var ErrUnavailable = errors.New("recommendation source is unavailable")
@@ -47,12 +47,19 @@ type Result struct {
 }
 
 type Service struct {
-	soundcloud    *soundcloud.Client
+	soundcloud    CandidateSource
 	collaborative Collaborative
 	catalog       Catalog
 	content       ContentBased
 	preferences   PreferenceSource
 	history       HistorySource
+}
+
+// CandidateSource is the live-search provider. Recent provider-neutral catalog
+// candidates are blended on every request, so an upstream SoundCloud outage
+// cannot invalidate tracks we have already observed from another source.
+type CandidateSource interface {
+	SearchTracks(context.Context, string, soundcloud.SearchOptions) (*soundcloudmodels.PaginatedResponse[soundcloudmodels.Track], error)
 }
 
 type Collaborative interface {
@@ -104,7 +111,14 @@ func WithHistorySource(value HistorySource) Option {
 }
 
 func New(sc *soundcloud.Client, options ...Option) *Service {
-	service := &Service{soundcloud: sc}
+	service := &Service{}
+	// A typed nil *soundcloud.Client stored in an interface is non-nil and
+	// would panic when Recommend calls SearchTracks. Keeping it unset also
+	// makes the catalog-only fallback usable in tests and during an upstream
+	// outage.
+	if sc != nil {
+		service.soundcloud = sc
+	}
 	for _, option := range options {
 		option(service)
 	}
@@ -112,42 +126,63 @@ func New(sc *soundcloud.Client, options ...Option) *Service {
 }
 
 func (s *Service) Recommend(ctx context.Context, request Request) (Result, error) {
-	if s.soundcloud == nil {
-		return Result{}, ErrUnavailable
-	}
 	request = canonicalRequest(request)
 	request = s.withStoredPreferences(ctx, request)
 	request = s.withStoredHistory(ctx, request)
 	query := BuildQuery(request.Preferences, request.Context, request.Likes, request.Round)
-	response, err := s.soundcloud.SearchTracks(ctx, query, soundcloud.SearchOptions{Limit: 50})
-	if err != nil {
-		return Result{}, fmt.Errorf("search recommendation candidates: %w", err)
-	}
 	collaborativeIDs := s.personalizedIDs(ctx, request.UserID)
 	contentIDs := s.contentIDs(ctx, request.UserID, tasteSeedKeys(request), query)
 	personalizedIDs := BlendRankings(collaborativeIDs, contentIDs, 100)
 	personalized := s.catalogTracks(ctx, personalizedIDs)
-	trusted := make([]music.Track, 0, len(personalized)+len(response.Collection))
+	catalogCandidates := s.catalogCandidates(ctx, 100)
+	trusted := make([]music.Track, 0, len(personalized)+len(catalogCandidates)+50)
 	trusted = append(trusted, personalized...)
-	for _, raw := range response.Collection {
-		trusted = append(trusted, music.FromSoundCloud(raw))
+	trusted = append(trusted, catalogCandidates...)
+	// Existing catalog rows are candidates, not fresh observations. Re-saving
+	// them on every Wave would continually advance updated_at and turn the
+	// recent-candidate query into a self-reinforcing loop.
+	observed := make([]music.Track, 0, 50)
+	if s.soundcloud != nil {
+		if response, err := s.soundcloud.SearchTracks(ctx, query, soundcloud.SearchOptions{Limit: 50}); err == nil {
+			for _, raw := range response.Collection {
+				track := music.FromSoundCloud(raw)
+				trusted = append(trusted, track)
+				observed = append(observed, track)
+			}
+		}
 	}
 	candidates := make([]music.Track, 0, len(trusted)+len(request.Seeds))
 	candidates = append(candidates, trusted...)
 	candidates = append(candidates, request.Seeds...)
-	if s.catalog != nil {
-		_ = s.catalog.Save(ctx, trusted)
+	if s.catalog != nil && len(observed) > 0 {
+		_ = s.catalog.Save(ctx, observed)
 	}
 	if s.collaborative != nil {
 		_ = s.collaborative.UpsertItems(ctx, trusted)
 	}
 	pool := Rank(candidates, request, 100)
+	if len(pool) == 0 && len(candidates) == 0 {
+		return Result{}, ErrUnavailable
+	}
 	tracks, _ := Personalize(pool, personalizedIDs, 30)
+	tracks = diversifyCatalogFallback(tracks, pool, catalogCandidates, 30)
 	model := modelVersion(
 		countMatches(pool, collaborativeIDs) > 0,
 		s.contentVersion(countMatches(pool, contentIDs) > 0),
 	)
 	return Result{Tracks: tracks, ModelVersion: model, Reason: query}, nil
+}
+
+func (s *Service) catalogCandidates(ctx context.Context, limit int) []music.Track {
+	provider, ok := s.catalog.(CandidateCatalog)
+	if !ok || provider == nil {
+		return nil
+	}
+	tracks, err := provider.ListCandidates(ctx, limit)
+	if err != nil {
+		return nil
+	}
+	return canonicalTracks(tracks)
 }
 
 func canonicalRequest(request Request) Request {
@@ -439,6 +474,68 @@ func Personalize(tracks []music.Track, ids []string, limit int) ([]music.Track, 
 		ordered = append(ordered[:pick], ordered[pick+1:]...)
 	}
 	return result, matched
+}
+
+// diversifyCatalogFallback reserves a small deterministic exploration budget
+// for recently observed provider sources that are otherwise absent from a
+// full collaborative response. Gorse can legitimately return thirty popular
+// SoundCloud items; without this blend, a working Spotify/YouTube/Bandcamp
+// catalog would never surface in the first Wave page. Only tracks that
+// survived Rank are eligible, there is at most one item for each new source,
+// and at most ten percent of the page is replaced.
+func diversifyCatalogFallback(result, ranked, catalog []music.Track, limit int) []music.Track {
+	if limit <= 0 || len(result) == 0 || len(catalog) == 0 {
+		return result
+	}
+	if len(result) > limit {
+		result = append([]music.Track(nil), result[:limit]...)
+	} else {
+		result = append([]music.Track(nil), result...)
+	}
+
+	eligible := make(map[string]bool, len(ranked))
+	for _, track := range ranked {
+		if track.Source != "" && track.ID != "" {
+			eligible[track.Key()] = true
+		}
+	}
+	present := make(map[string]bool, len(result))
+	presentSources := make(map[string]bool, len(result))
+	for _, track := range result {
+		present[track.Key()] = true
+		if track.Source != "" {
+			presentSources[track.Source] = true
+		}
+	}
+
+	candidates := make([]music.Track, 0, len(catalog))
+	chosenSources := make(map[string]bool)
+	for _, track := range catalog {
+		key := track.Key()
+		if track.Source == "" || track.ID == "" || !eligible[key] || present[key] ||
+			presentSources[track.Source] || chosenSources[track.Source] {
+			continue
+		}
+		chosenSources[track.Source] = true
+		candidates = append(candidates, track)
+	}
+	if len(candidates) == 0 {
+		return result
+	}
+
+	quota := max(1, len(result)/10)
+	quota = min(quota, len(candidates))
+	if len(result) < limit {
+		quota = min(quota, limit-len(result))
+		return append(result, candidates[:quota]...)
+	}
+	for index := 0; index < quota; index++ {
+		// Spread replacements through the page instead of concentrating all
+		// exploration at the first or final position.
+		position := (index + 1) * len(result) / (quota + 1)
+		result[position] = candidates[index]
+	}
+	return result
 }
 
 func BuildQuery(preferences Preferences, context Context, likes []music.Track, round int) string {

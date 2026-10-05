@@ -290,12 +290,14 @@ function withDerivedPins(library, playlists) {
   return {
     ...library,
     playlists,
-    pins: [...new Set([
-      ...playlists
-        .filter((playlist) => playlist.pinned)
-        .map((playlist) => entityKey(playlist, "mixora")),
-      ...foreignPins,
-    ])],
+    pins: [
+      ...new Set([
+        ...playlists
+          .filter((playlist) => playlist.pinned)
+          .map((playlist) => entityKey(playlist, "mixora")),
+        ...foreignPins,
+      ]),
+    ],
   };
 }
 
@@ -363,8 +365,7 @@ export function legacyPlaylistBackfill(library, options = {}) {
         ...raw,
         id,
         revision: 0,
-        pinned:
-          raw?.pinned === true || pins.has(entityKey(raw, "mixora")),
+        pinned: raw?.pinned === true || pins.has(entityKey(raw, "mixora")),
       },
       { legacyID: sourceLegacyID },
     );

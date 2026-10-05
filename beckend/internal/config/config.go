@@ -29,6 +29,14 @@ type Config struct {
 	EmbeddingDimensions int
 	EmbeddingTimeout    time.Duration
 	EmbeddingBatchSize  int
+	YTDLPTimeout        time.Duration
+	YTDLPMaxConcurrent  int
+	YTDLPCookiesFile    string
+	// Shared browser cookies are unsafe for the multi-user HTTP API: one
+	// account could otherwise resolve media using another account's provider
+	// session. They are allowed only for an explicitly opted-in, single-user
+	// local development runtime.
+	AllowSharedYTDLPCookies bool
 }
 
 func Load() (Config, error) {
@@ -56,31 +64,51 @@ func Load() (Config, error) {
 	if err != nil || embeddingBatchSize < 1 || embeddingBatchSize > 128 {
 		return Config{}, fmt.Errorf("MIXORA_EMBEDDINGS_BATCH_SIZE must be between 1 and 128")
 	}
+	ytdlpTimeout, err := time.ParseDuration(value("MIXORA_YTDLP_TIMEOUT", "30s"))
+	if err != nil || ytdlpTimeout < time.Second || ytdlpTimeout > 2*time.Minute {
+		return Config{}, fmt.Errorf("MIXORA_YTDLP_TIMEOUT must be between 1s and 2m")
+	}
+	ytdlpMaxConcurrent, err := strconv.Atoi(value("MIXORA_YTDLP_MAX_CONCURRENT", "2"))
+	if err != nil || ytdlpMaxConcurrent < 1 || ytdlpMaxConcurrent > 8 {
+		return Config{}, fmt.Errorf("MIXORA_YTDLP_MAX_CONCURRENT must be between 1 and 8")
+	}
+	allowSharedYTDLPCookies, err := strconv.ParseBool(value("MIXORA_ALLOW_SHARED_YTDLP_COOKIES", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("MIXORA_ALLOW_SHARED_YTDLP_COOKIES: %w", err)
+	}
 
 	cfg := Config{
-		HTTPAddr:            value("MIXORA_HTTP_ADDR", ":8080"),
-		Environment:         value("MIXORA_ENV", "development"),
-		DatabaseURL:         strings.TrimSpace(os.Getenv("MIXORA_DATABASE_URL")),
-		RedisAddr:           value("MIXORA_REDIS_ADDR", "127.0.0.1:6379"),
-		PublicURL:           strings.TrimRight(value("MIXORA_PUBLIC_URL", "http://127.0.0.1:5174"), "/"),
-		CookieSecure:        secure,
-		SessionTTL:          ttl,
-		SMTPAddr:            value("MIXORA_SMTP_ADDR", "127.0.0.1:1025"),
-		SMTPFrom:            value("MIXORA_SMTP_FROM", "Mixora <noreply@mixora.local>"),
-		SMTPUsername:        strings.TrimSpace(os.Getenv("MIXORA_SMTP_USERNAME")),
-		SMTPPassword:        os.Getenv("MIXORA_SMTP_PASSWORD"),
-		GorseURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("MIXORA_GORSE_URL")), "/"),
-		GorseAPIKey:         strings.TrimSpace(os.Getenv("MIXORA_GORSE_API_KEY")),
-		GorseTimeout:        gorseTimeout,
-		EmbeddingURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("MIXORA_EMBEDDINGS_URL")), "/"),
-		EmbeddingModel:      value("MIXORA_EMBEDDINGS_MODEL", "embeddinggemma:300m-qat-q4_0"),
-		EmbeddingVersion:    value("MIXORA_EMBEDDINGS_VERSION", "embeddinggemma-q4-768-doc-v1"),
-		EmbeddingDimensions: embeddingDimensions,
-		EmbeddingTimeout:    embeddingTimeout,
-		EmbeddingBatchSize:  embeddingBatchSize,
+		HTTPAddr:                value("MIXORA_HTTP_ADDR", ":8080"),
+		Environment:             value("MIXORA_ENV", "development"),
+		DatabaseURL:             strings.TrimSpace(os.Getenv("MIXORA_DATABASE_URL")),
+		RedisAddr:               value("MIXORA_REDIS_ADDR", "127.0.0.1:6379"),
+		PublicURL:               strings.TrimRight(value("MIXORA_PUBLIC_URL", "http://127.0.0.1:5174"), "/"),
+		CookieSecure:            secure,
+		SessionTTL:              ttl,
+		SMTPAddr:                value("MIXORA_SMTP_ADDR", "127.0.0.1:1025"),
+		SMTPFrom:                value("MIXORA_SMTP_FROM", "Mixora <noreply@mixora.local>"),
+		SMTPUsername:            strings.TrimSpace(os.Getenv("MIXORA_SMTP_USERNAME")),
+		SMTPPassword:            os.Getenv("MIXORA_SMTP_PASSWORD"),
+		GorseURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("MIXORA_GORSE_URL")), "/"),
+		GorseAPIKey:             strings.TrimSpace(os.Getenv("MIXORA_GORSE_API_KEY")),
+		GorseTimeout:            gorseTimeout,
+		EmbeddingURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("MIXORA_EMBEDDINGS_URL")), "/"),
+		EmbeddingModel:          value("MIXORA_EMBEDDINGS_MODEL", "embeddinggemma:300m-qat-q4_0"),
+		EmbeddingVersion:        value("MIXORA_EMBEDDINGS_VERSION", "embeddinggemma-q4-768-doc-v1"),
+		EmbeddingDimensions:     embeddingDimensions,
+		EmbeddingTimeout:        embeddingTimeout,
+		EmbeddingBatchSize:      embeddingBatchSize,
+		YTDLPTimeout:            ytdlpTimeout,
+		YTDLPMaxConcurrent:      ytdlpMaxConcurrent,
+		YTDLPCookiesFile:        strings.TrimSpace(os.Getenv("MIXORA_YTDLP_COOKIES_FILE")),
+		AllowSharedYTDLPCookies: allowSharedYTDLPCookies,
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("MIXORA_DATABASE_URL is required")
+	}
+	if cfg.YTDLPCookiesFile != "" &&
+		(!cfg.AllowSharedYTDLPCookies || !strings.EqualFold(cfg.Environment, "development")) {
+		return Config{}, fmt.Errorf("MIXORA_YTDLP_COOKIES_FILE is allowed only with MIXORA_ENV=development and MIXORA_ALLOW_SHARED_YTDLP_COOKIES=true; never share provider cookies in a multi-user API")
 	}
 	return cfg, nil
 }

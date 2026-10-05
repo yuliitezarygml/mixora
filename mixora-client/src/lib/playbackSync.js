@@ -12,6 +12,10 @@ const slim = (track) =>
         duration: track.duration,
         access: track.access,
         explicit: !!track.explicit,
+        // Preserve the stable provider page, never an expiring audio URL.
+        // YouTube, VK and Bandcamp playback re-resolve this after reload or
+        // desktop sync.
+        permalink: track.permalink,
       }
     : null;
 

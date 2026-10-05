@@ -45,11 +45,7 @@ func (h *Handler) UniversalExtractHandler(w http.ResponseWriter, r *http.Request
 
 	item, err := h.extractYTDLP(r.Context(), targetURL)
 	if err != nil {
-		if isInvalidYTDLPRequest(err) {
-			Error(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		Error(w, http.StatusInternalServerError, err.Error())
+		writeYTDLPFailure(w, err)
 		return
 	}
 
@@ -78,7 +74,7 @@ func (h *Handler) YouTubeSearchHandler(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.ytdlp.SearchYouTube(r.Context(), query, limit)
 	if err != nil {
-		Error(w, http.StatusInternalServerError, err.Error())
+		writeYTDLPFailure(w, err)
 		return
 	}
 	h.observeYTDLPItems(r.Context(), result.Items)
@@ -114,11 +110,7 @@ func (h *Handler) YouTubeStreamHandler(w http.ResponseWriter, r *http.Request) {
 
 	audioURL, err := h.ytdlp.ExtractAudioURL(r.Context(), target)
 	if err != nil {
-		if isInvalidYTDLPRequest(err) {
-			Error(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		Error(w, http.StatusInternalServerError, err.Error())
+		writeYTDLPFailure(w, err)
 		return
 	}
 
@@ -141,13 +133,14 @@ func (h *Handler) BandcampResolveHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	targetURL, err := validateBandcampURL(targetURL)
+	if err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	item, err := h.extractYTDLP(r.Context(), targetURL)
 	if err != nil {
-		if isInvalidYTDLPRequest(err) {
-			Error(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		Error(w, http.StatusInternalServerError, err.Error())
+		writeYTDLPFailure(w, err)
 		return
 	}
 
@@ -167,13 +160,14 @@ func (h *Handler) VKResolveHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	targetURL, err := validateVKURL(targetURL)
+	if err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	item, err := h.extractYTDLP(r.Context(), targetURL)
 	if err != nil {
-		if isInvalidYTDLPRequest(err) {
-			Error(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		Error(w, http.StatusInternalServerError, err.Error())
+		writeYTDLPFailure(w, err)
 		return
 	}
 
@@ -182,4 +176,22 @@ func (h *Handler) VKResolveHandler(w http.ResponseWriter, r *http.Request) {
 
 func isInvalidYTDLPRequest(err error) bool {
 	return isMediaURLPolicyError(err) || errors.Is(err, ytdlp.ErrUnsupportedURL)
+}
+
+// writeYTDLPFailure is the public error boundary around the extractor. Its
+// stderr belongs in server diagnostics, never in a browser response: it may
+// include temporary media URLs or provider-specific operational details.
+func writeYTDLPFailure(w http.ResponseWriter, err error) {
+	if isInvalidYTDLPRequest(err) {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		Error(w, http.StatusGatewayTimeout, "media source timed out")
+	case errors.Is(err, ytdlp.ErrBinaryNotFound):
+		Error(w, http.StatusServiceUnavailable, "media extractor is temporarily unavailable")
+	default:
+		Error(w, http.StatusBadGateway, "media source is temporarily unavailable")
+	}
 }

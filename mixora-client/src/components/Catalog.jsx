@@ -2,7 +2,11 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Cover, Empty } from "./Primitives.jsx";
 import { useApp } from "../state/context.js";
-import { providerArtistTracks, providerPlaylistTracks } from "../lib/api.js";
+import {
+  presentRequestFailure,
+  providerArtistTracks,
+  providerPlaylistTracks,
+} from "../lib/api.js";
 import { entityKey } from "../lib/library.js";
 import Icon from "./Icon.jsx";
 
@@ -108,6 +112,7 @@ export function LoadState({
   children,
   empty = false,
   emptyTitle = "Здесь пока нет музыки",
+  source = "",
 }) {
   const app = useApp();
   if (remote.loading)
@@ -123,18 +128,33 @@ export function LoadState({
         <span className="sr-only">Загрузка музыки…</span>
       </div>
     );
-  if (remote.error)
+  if (remote.error) {
+    const failure = presentRequestFailure(remote.error, {
+      source,
+      online: remote.online,
+    });
     return (
-      <Empty
-        title="Не удалось загрузить музыку"
-        text={remote.error}
-        action={
-          <button className="secondary" onClick={remote.retry}>
-            Повторить
-          </button>
-        }
-      />
+      <div role="alert">
+        <Empty
+          title={failure.title}
+          text={failure.text}
+          action={
+            failure.action === "sign-in" ? (
+              <button className="primary" onClick={() => app.setAuthOpen(true)}>
+                Войти
+              </button>
+            ) : failure.retryable ? (
+              <button className="secondary" onClick={remote.retry}>
+                {failure.kind === "offline"
+                  ? "Проверить подключение"
+                  : "Повторить"}
+              </button>
+            ) : null
+          }
+        />
+      </div>
     );
+  }
   if (empty)
     return (
       <Empty

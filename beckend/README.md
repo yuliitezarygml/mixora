@@ -1,11 +1,12 @@
-# Mixora API и Universal Music Engine (SoundCloud + Spotify Librespot + YouTube / Bandcamp / VK)
+# Mixora API и музыкальный engine (SoundCloud + Spotify + YouTube / Bandcamp / VK)
 
 Готовый музыкальный движок на Go остаётся отдельным слоем SDK, REST-маршрутов и CLI. `cmd/server` теперь также поднимает app-layer Mixora: аутентификацию и сессии, библиотеку пользователя, события, рекомендации, синхронизацию плеера, PostgreSQL-миграции и почтовый outbox. Неизвестные app-layer маршруты передаются в существующий музыкальный router.
 
 Движок объединяет три источника:
 1. **SoundCloud v2** (реверс-инжиниринг с авто-скрапингом `client_id`)
 2. **Spotify & Librespot** (Spotify Connect приемник, удаленное управление и Zero-Config парсинг)
-3. **Universal Extractor на базе `yt-dlp`** (YouTube / YouTube Music, Bandcamp, ВКонтакте (VK) и ещё 1000+ медиа-сервисов)
+3. **Внешние источники на базе `yt-dlp`**: allowlist для YouTube / YouTube
+   Music, отдельных треков Bandcamp и публичных media-страниц VK/VK Video.
 
 ---
 
@@ -30,15 +31,20 @@
 
 ### 🔴 3. Universal Extractor (`yt-dlp`):
 - **YouTube & YouTube Music**:
-  - Полный обход алгоритмов троттлинга `n-sig` (всегда максимальная скорость отдачи).
-  - Стриминг наивысшего качества: **Opus 160 kbps** (`itag 251`) и **AAC 128 kbps** (`itag 140`).
-  - Быстрый поиск треков через `ytsearch` без квот Google Cloud API.
+  - Поиск через `ytsearch` без квот Google Cloud API.
+  - `yt-dlp` запрашивает лучший доступный audio-only формат; формат, bitrate,
+    скорость и доступность определяет провайдер, поэтому они не гарантируются
+    контрактом Mixora.
 - **Bandcamp**:
-  - Прямые CDN-ссылки на стриминг MP3 128/160 kbps с `bcbits.com`.
-  - Парсинг альбомов, треклистов и оригинальных обложек высокого разрешения.
+  - Разрешены только страницы вида `https://<artist>.bandcamp.com/track/<slug>`.
+  - Metadata и временная media-ссылка выдаются после server-side resolve;
+    доступность зависит от публичности страницы. Import альбомов/треклистов
+    пока не является контрактом API.
 - **ВКонтакте (VK)**:
-  - Извлечение треков, альбомов и плейлистов сообществ/пользователей со склейкой HLS m3u8.
-- **1000+ сервисов**: поддержка Mixcloud, Vimeo, TikTok и любых других источников.
+  - Разрешены только публичные URL поддерживаемых media-форматов; доступность
+    конкретной записи зависит от самого провайдера и его прав доступа.
+- **Граница безопасности**: HTTP API не принимает «любой сайт», не ходит к
+  localhost/IP и не использует shared provider cookies в обычной конфигурации.
 
 ---
 
@@ -139,6 +145,11 @@ loopback-адресе `127.0.0.1:11434`.
 | `MIXORA_EMBEDDINGS_DIMENSIONS` | `768` | Сейчас поддерживается строго `768`; другое значение останавливает запуск с ошибкой конфигурации. |
 | `MIXORA_EMBEDDINGS_TIMEOUT` | `2m` | HTTP-таймаут Ollama, должен быть больше нуля и не более `10m`; embedding поискового запроса дополнительно ограничен `4s`. |
 | `MIXORA_EMBEDDINGS_BATCH_SIZE` | `16` | Число треков в одном запросе worker-а, допустимый диапазон `1..128`. |
+| `MIXORA_YTDLP_TIMEOUT` | `30s` | Deadline одной внешней yt-dlp операции; допустимый диапазон `1s..2m`. |
+| `MIXORA_YTDLP_MAX_CONCURRENT` | `2` | Лимит параллельных yt-dlp subprocess в API, допустимый диапазон `1..8`. |
+| `MIXORA_ENV` | `development` | Среда процесса. Непустой `MIXORA_YTDLP_COOKIES_FILE` разрешён конфигурацией только при точном значении `development`. |
+| `MIXORA_YTDLP_COOKIES_FILE` | пусто | Путь к cookies-файлу только для изолированного local development; сам сервер не может доказать, что runtime single-user. В production его не монтируют. |
+| `MIXORA_ALLOW_SHARED_YTDLP_COOKIES` | `false` | Второй обязательный явный opt-in для cookies-файла. Вместе с `MIXORA_ENV=development` разрешает запуск, но не делает shared cookies безопасными для нескольких пользователей. |
 | `MIXORA_EMBEDDINGS_REQUIRED` | `false` | Только Compose-флаг зависимости API от `ollama-pull`; `make embeddings` временно устанавливает `true`. |
 | `OLLAMA_IMAGE` | `ollama/ollama:0.34.1` | Версия Docker image Ollama. |
 | `OLLAMA_PORT` | `11434` | Локальный loopback-порт Ollama. |
@@ -149,6 +160,12 @@ loopback-адресе `127.0.0.1:11434`.
 или Ollama во внешнюю сеть.
 
 Для базового запуска **не нужны** SoundCloud или Spotify Client ID. SoundCloud автоматически получает текущий `client_id`, а Spotify умеет работать в Zero-Config режиме. `SOUNDCLOUD_CLIENT_ID`, `SOUNDCLOUD_AUTH_TOKEN`, `SPOTIFY_CLIENT_ID` и `SPOTIFY_CLIENT_SECRET` — только опциональные переопределения для прямого запуска Go-процесса; Compose-сервису их нужно явно передать в `environment`, если переопределение всё-таки нужно.
+
+External yt-dlp и Spotify Connect status/info/control routes требуют Mixora
+cookie-сессию.
+Базовый `compose.yaml` намеренно не монтирует cookies-файл. Нельзя добавлять
+один авторизованный cookies-файл в multi-user API: иначе один пользователь
+сможет получить медиа через сессию другого.
 
 Полезные команды:
 
@@ -205,21 +222,34 @@ docker compose down
    возвращает прежний результат; тот же ключ с другим запросом даёт `409`.
    `neutral` — явное снятие ранее выбранного состояния, а не отсутствие записи.
 6. PostgreSQL хранит исходные события. Фоновый worker повторяемо пересчитывает
-   агрегаты и передаёт их в локальный Gorse через `PUT /api/feedback`; события
-   не теряются, если Gorse временно выключен.
-7. Отдельный outbox worker публикует последнее текущее состояние в Gorse: снимает
-   противоположный feedback для like/dislike и удаляет оба для neutral. Pending
+   агрегаты и передаёт в локальный Gorse через `PUT /api/feedback` только
+   `source:id`, уже подтверждённые в `track_catalog`; item сначала создаётся из
+   server-side metadata. Неизвестное событие остаётся в журнале продукта, но не
+   может создать Gorse item; недоступность Gorse или catalog оставляет batch
+   retryable.
+7. Для `liked`/`disliked` отдельный outbox worker перед публикацией повторно
+   подтверждает `source:id` в `track_catalog` и отправляет в Gorse только
+   server-side metadata snapshot: снимает противоположный feedback и ставит
+   актуальный. Для `neutral` он удаляет оба сигнала без upsert item. Pending
    версии coalesced, поэтому после недоступности Gorse доставляется последний
-   выбор, а не устаревшая последовательность кликов.
+   выбор, а не устаревшая последовательность кликов. Неизвестный legacy/client
+   positive snapshot сохраняется как локальный desired state, но намеренно не
+   создаёт item в Gorse. Outbox ставит durable catalog-unverified marker и
+   автоматически переотправляет актуальное состояние после первого
+   подтверждённого наблюдения этого `source:id`; временная ошибка каталога
+   остаётся retryable.
 8. Content-based слой строит профиль вкуса по положительным событиям за
    последние 180 дней, ищет ближайшие треки по среднему вектору и отдельно
    векторизует текущий запрос Wave. Текущее состояние имеет приоритет над старыми
    одноимёнными like/dislike-событиями. Два списка объединяются reciprocal-rank
    fusion с весами `0.65` для вкуса и `0.35` для запроса.
 9. Gorse возвращает только provider-neutral ключи вида `source:id`.
-   Collaborative- и content-списки смешиваются в пропорции 2:1. Затем сервер
-   восстанавливает полные треки из локального каталога, применяет
-   explicit/language/dislike-фильтры и ограничение повторов артиста.
+   Collaborative- и content-списки смешиваются в пропорции 2:1. К ним всегда
+   добавляется до 100 недавних nonblocked snapshots `track_catalog` (SoundCloud,
+   Spotify preview, YouTube, Bandcamp, VK), затем сервер применяет
+   explicit/language/dislike-фильтры и ограничение повторов артиста. Если
+   персональная page полностью одного source, до 10% позиций получает
+   детерминированная source-diversity квота из уже отфильтрованного catalog.
 10. В `model_version` ответа `/api/v1/wave` перечислены реально использованные
    слои, например `gorse-v1+embeddinggemma-q4-768-doc-v1+rules-v0`.
 
@@ -349,17 +379,23 @@ docker compose exec postgres sh -lc \
 | `GET` | `/api/v1/spotify/albums/{id}` | Метаданные альбома и треклист |
 | `GET` | `/api/v1/spotify/artists/{id}` | Профиль артиста и топ-треки |
 | `GET` | `/api/v1/spotify/search?q=<query>` | Поиск по каталогу Spotify |
-| `GET` | `/api/v1/spotify/connect/status` | Текущий статус воспроизведения Spotify Connect |
-| `POST` | `/api/v1/spotify/connect/player/{play\|pause\|next\|volume\|load}` | Управление плеером Connect |
+| `GET` | `/api/v1/spotify/connect/status` | 🔒 Текущий статус воспроизведения Spotify Connect |
+| `GET` | `/api/v1/spotify/connect/info` | 🔒 Диагностика локального Connect daemon и binary |
+| `POST` | `/api/v1/spotify/connect/player/{play\|resume\|pause\|play-pause\|next\|prev\|volume\|seek\|load}` | 🔒 Управление плеером Connect |
 
 #### 🔴 Universal Extractor (YouTube, VK, Bandcamp via yt-dlp)
 | Метод | Эндпоинт | Описание |
 |---|---|---|
-| `GET` | `/api/v1/extract?url=<url>` | **Универсальный экстрактор**: отдает название, автора, обложку и прямой CDN Audio URL для любого сайта |
-| `GET` | `/api/v1/youtube/search?q=<query>&limit=5` | Поиск треков на YouTube / YouTube Music |
-| `GET` | `/api/v1/youtube/stream?url=<yt_url_or_id>` | Извлечение прямого аудио-стрима YouTube (Opus 160k / AAC 128k) |
-| `GET` | `/api/v1/bandcamp/resolve?url=<bc_url>` | Резолв трека или альбома Bandcamp с прямыми MP3-потоками |
-| `GET` | `/api/v1/vk/resolve?url=<vk_url>` | Резолв аудиозаписей ВКонтакте (VK) |
+| `GET` | `/api/v1/extract?url=<url>` | 🔒 Разрешённый HTTPS URL YouTube/YouTube Music, Bandcamp `/track/…`, VK/VK Video media; возвращает metadata и краткоживущую media-ссылку |
+| `GET` | `/api/v1/youtube/search?q=<query>&limit=5` | 🔒 Поиск треков на YouTube / YouTube Music |
+| `GET` | `/api/v1/youtube/stream?url=<yt_url>` или `?id=<video_id>` | 🔒 Извлечение краткоживущего аудио-стрима YouTube |
+| `GET` | `/api/v1/bandcamp/resolve?url=<bc_url>` | 🔒 Резолв одного разрешённого Bandcamp-трека |
+| `GET` | `/api/v1/vk/resolve?url=<vk_url>` | 🔒 Резолв публичной разрешённой media-страницы VK/VK Video |
+
+Ошибки extractor-а намеренно не возвращают stderr `yt-dlp`: ошибка внешнего
+источника — `502`, недоступный extractor — `503`, deadline — `504`. Клиент
+повторяет воспроизведение по сохранённому permalink и получает новую временную
+media-ссылку, а не хранит или переиспользует старую CDN URL.
 
 ---
 
@@ -368,7 +404,7 @@ docker compose exec postgres sh -lc \
 Команды ниже выполняются из каталога `beckend`:
 
 ```bash
-# 1. Универсальный экстрактор для любых ссылок (YouTube, VK, Bandcamp)
+# 1. Экстрактор поддерживаемых ссылок (YouTube, VK, Bandcamp)
 go run ./cmd/cli extract "https://disasterpeace.bandcamp.com/track/compass"
 go run ./cmd/cli extract "https://www.youtube.com/watch?v=UDVtMYqUAyw"
 
@@ -399,11 +435,13 @@ go run ./cmd/cli lyrics "https://soundcloud.com/user/track-name"
 * **Docker с Compose plugin** — для рекомендуемого запуска всего app-layer стека.
 * **Go 1.27.1+** — для локальной сборки сервера, CLI и SDK.
 * **PostgreSQL** — обязателен для `cmd/server`, но уже включён в корневой Compose-стек.
-* **yt-dlp** *(опционально для Universal Extractor)*: `brew install yt-dlp` (macOS) или `sudo apt install yt-dlp` (Linux).
+* **yt-dlp** *(только для локального запуска Go/CLI)*: `brew install yt-dlp` (macOS) или `sudo apt install yt-dlp` (Linux).
 * **ffmpeg** *(опционально для медиа-обработки)*: `brew install ffmpeg` (macOS) или `sudo apt install ffmpeg` (Linux).
 * **go-librespot** *(опционально для Spotify Connect)*: `brew install go-librespot`.
 
-Внешние бинарники `yt-dlp` и `go-librespot` не входят в текущий Docker image; без них сервер продолжает работать, а зависящие от них функции остаются отключёнными.
+`yt-dlp` входит в API Docker image. `go-librespot` намеренно не входит: Spotify
+Connect остаётся дополнительной локальной интеграцией и требует отдельной
+настройки демона.
 
 ---
 

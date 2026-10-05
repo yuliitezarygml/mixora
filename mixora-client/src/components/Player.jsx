@@ -64,9 +64,7 @@ export default function Player() {
   const liked =
     a.current &&
     a.library.likes.some((t) => trackKey(t) === trackKey(a.current));
-  const progress = a.length
-    ? Math.min(100, (a.position / a.length) * 100)
-    : 0;
+  const progress = a.length ? Math.min(100, (a.position / a.length) * 100) : 0;
   return (
     <footer
       className={`player CommonLayout_playerBar__zXRxq PlayerBarDesktop_root__d2Hwi ${tint ? "player-live" : ""}`}
@@ -97,12 +95,7 @@ export default function Player() {
             <span>Треки, которые хочется слушать</span>
           )}
         </div>
-        {a.current && (
-          <IconButton
-            icon="more_xxs"
-            label="Действия с треком"
-          />
-        )}
+        {a.current && <IconButton icon="more_xxs" label="Действия с треком" />}
       </div>
       <div className="player-center PlayerBarDesktop_sonata__sJHY_">
         <div className="player-buttons BaseSonataControlsDesktop_root__E6wjA SonataControls_root__w8uqu">
@@ -197,7 +190,14 @@ export default function Player() {
       </div>
       {a.playbackError && (
         <div className="player-error" role="alert">
-          {a.playbackError}
+          <span>{a.playbackError}</span>
+          <button
+            className="text-button player-error-retry"
+            type="button"
+            onClick={a.retryPlayback}
+          >
+            Повторить
+          </button>
         </div>
       )}
     </footer>

@@ -233,39 +233,39 @@ export function TrackCards({ tracks, onActivate }) {
         .map((t) => {
           const playable = t.access !== "blocked";
           return (
-          <article className="music-card" key={trackKey(t)}>
-            <div className="card-image TrackCard_coverBlock__WdvvQ">
-              <Cover track={t} large />
+            <article className="music-card" key={trackKey(t)}>
+              <div className="card-image TrackCard_coverBlock__WdvvQ">
+                <Cover track={t} large />
+                <button
+                  className="card-play"
+                  aria-label={`Слушать ${t.title}`}
+                  disabled={!playable}
+                  onClick={() => {
+                    onActivate?.(t);
+                    app.play(t, tracks);
+                  }}
+                >
+                  <Icon name="play_filled_l" size={48} />
+                </button>
+              </div>
               <button
-                className="card-play"
-                aria-label={`Слушать ${t.title}`}
+                className="card-title TrackCard_title__BVLuv"
                 disabled={!playable}
                 onClick={() => {
                   onActivate?.(t);
                   app.play(t, tracks);
                 }}
               >
-                <Icon name="play_filled_l" size={48} />
+                {t.title}
               </button>
-            </div>
-            <button
-              className="card-title TrackCard_title__BVLuv"
-              disabled={!playable}
-              onClick={() => {
-                onActivate?.(t);
-                app.play(t, tracks);
-              }}
-            >
-              {t.title}
-            </button>
-            <Link
-              className="artist-link"
-              to={`/artist?id=${encodeURIComponent(t.artistId || t.artist)}&source=${encodeURIComponent(t.source || "soundcloud")}`}
-            >
-              {t.artist}
-            </Link>
-            <span className="card-source">{trackSourceLabel(t)}</span>
-          </article>
+              <Link
+                className="artist-link"
+                to={`/artist?id=${encodeURIComponent(t.artistId || t.artist)}&source=${encodeURIComponent(t.source || "soundcloud")}`}
+              >
+                {t.artist}
+              </Link>
+              <span className="card-source">{trackSourceLabel(t)}</span>
+            </article>
           );
         })}
     </div>

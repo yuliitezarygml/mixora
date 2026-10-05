@@ -10,7 +10,10 @@ const track = (id, source = "soundcloud") => ({
 
 test("buildWaveRequest keeps canonical seed order and applies transport limits", () => {
   const likes = Array.from({ length: 45 }, (_, index) => track(index + 1));
-  const history = [track(1), ...Array.from({ length: 45 }, (_, index) => track(index + 46))];
+  const history = [
+    track(1),
+    ...Array.from({ length: 45 }, (_, index) => track(index + 46)),
+  ];
   const dislikes = Array.from({ length: 85 }, (_, index) => track(index + 100));
   const catalog = [track(2), track("local", "local")];
 
@@ -55,7 +58,10 @@ test("buildWaveRequest turns missing context into an empty object", () => {
 
 test("decodeWaveResponse ignores a session when the response has no tracks", () => {
   assert.deepEqual(
-    decodeWaveResponse({ session_id: "session-1", model_version: "content-v2" }),
+    decodeWaveResponse({
+      session_id: "session-1",
+      model_version: "content-v2",
+    }),
     { tracks: [], sessionId: "", modelVersion: "content-v2" },
   );
 });

@@ -13,10 +13,12 @@ import (
 
 // Client provides an interface for extracting media and streaming URLs using yt-dlp.
 type Client struct {
-	binPath     string
-	cookiesFile string
-	timeout     time.Duration
-	mu          sync.RWMutex
+	binPath       string
+	cookiesFile   string
+	timeout       time.Duration
+	maxConcurrent int
+	semaphore     chan struct{}
+	mu            sync.RWMutex
 }
 
 // Option configures a Client.
@@ -43,10 +45,19 @@ func WithTimeout(d time.Duration) Option {
 	}
 }
 
+// WithMaxConcurrent bounds extractor subprocesses in one API process. This
+// is a resource guard, not a replacement for HTTP-level authentication.
+func WithMaxConcurrent(value int) Option {
+	return func(c *Client) {
+		c.maxConcurrent = value
+	}
+}
+
 // New initializes a new yt-dlp client.
 func New(opts ...Option) *Client {
 	c := &Client{
-		timeout: 30 * time.Second,
+		timeout:       30 * time.Second,
+		maxConcurrent: 2,
 	}
 
 	for _, opt := range opts {
@@ -56,6 +67,10 @@ func New(opts ...Option) *Client {
 	if c.binPath == "" {
 		c.binPath = findYtDlpBinary()
 	}
+	if c.maxConcurrent < 1 {
+		c.maxConcurrent = 1
+	}
+	c.semaphore = make(chan struct{}, c.maxConcurrent)
 
 	return c
 }
@@ -111,27 +126,49 @@ func findYtDlpBinary() string {
 }
 
 func (c *Client) runCommand(ctx context.Context, args ...string) ([]byte, error) {
-	if !c.IsInstalled() {
+	c.mu.RLock()
+	binPath := c.binPath
+	cookiesFile := c.cookiesFile
+	timeout := c.timeout
+	semaphore := c.semaphore
+	c.mu.RUnlock()
+	if binPath == "" {
 		return nil, ErrBinaryNotFound
+	}
+	// Every extractor invocation is an external subprocess and may wait on a
+	// remote provider. Honor the client timeout even when the HTTP server keeps
+	// streaming/WebSocket writes open indefinitely. An earlier caller deadline
+	// remains authoritative because context.WithTimeout uses the sooner one.
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	select {
+	case semaphore <- struct{}{}:
+		defer func() { <-semaphore }()
+	case <-ctx.Done():
+		return nil, fmt.Errorf("%w: %w", ErrExtractionFailed, ctx.Err())
 	}
 
 	var cmdArgs []string
-	if c.cookiesFile != "" {
-		cmdArgs = append(cmdArgs, "--cookies", c.cookiesFile)
+	if cookiesFile != "" {
+		cmdArgs = append(cmdArgs, "--cookies", cookiesFile)
 	}
 	cmdArgs = append(cmdArgs, args...)
 
-	cmd := exec.CommandContext(ctx, c.binPath, cmdArgs...)
-	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, binPath, cmdArgs...)
+	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		errStr := strings.TrimSpace(stderr.String())
-		if errStr == "" {
-			errStr = err.Error()
+		// A provider can put temporary signed URLs, cookie advice, or other
+		// diagnostics on stderr. Preserve the typed cause for callers without
+		// turning that untrusted output into an API response.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("%w: %w", ErrExtractionFailed, ctxErr)
 		}
-		return nil, fmt.Errorf("%w: %s", ErrExtractionFailed, errStr)
+		return nil, fmt.Errorf("%w: %w", ErrExtractionFailed, err)
 	}
 
 	return stdout.Bytes(), nil

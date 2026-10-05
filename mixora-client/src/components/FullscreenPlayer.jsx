@@ -102,11 +102,7 @@ export default function FullscreenPlayer() {
                   </div>
                   <div className="PlayQueueNowPlayingBlock_root__aJSb8">
                     {track && (
-                      <QueueRow
-                        track={track}
-                        current
-                        onClick={app.toggle}
-                      />
+                      <QueueRow track={track} current onClick={app.toggle} />
                     )}
                   </div>
                   <div className="PlayQueueAfterPlayingBlock_root__A7_wI">

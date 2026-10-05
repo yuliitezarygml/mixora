@@ -29,8 +29,8 @@ const (
 )
 
 var (
-	providerSourcePattern       = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
-	ErrIdempotencyKeyConflict   = errors.New("idempotency key has already been used for a different track preference")
+	providerSourcePattern        = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+	ErrIdempotencyKeyConflict    = errors.New("idempotency key has already been used for a different track preference")
 	ErrPreferenceStoreNoDatabase = errors.New("track preference store requires a database")
 )
 
@@ -45,9 +45,11 @@ const (
 	PreferenceNeutral  Preference = "neutral"
 )
 
-// TrackSnapshot is the deliberately small, provider-verified representation
-// retained with a preference. It is not hydrated from track_catalog: callers
-// must pass a music.Track already resolved by a trusted server-side path.
+// TrackSnapshot is the deliberately small, structurally validated representation
+// retained with a preference. It must not carry an audio URL or provider token.
+// A client may submit it for an offline-friendly library; downstream
+// recommendation publication independently verifies the canonical identity
+// against the server-side catalog.
 type TrackSnapshot struct {
 	ID        string  `json:"id"`
 	Source    string  `json:"source"`
@@ -199,7 +201,7 @@ func validatePreferenceText(field, value string, max int, required bool) error {
 func PreferenceRequestFingerprint(input PreferenceInput) []byte {
 	snapshot, _ := NewTrackSnapshot(input.Track)
 	body, _ := json.Marshal(struct {
-		Preference Preference   `json:"preference"`
+		Preference Preference    `json:"preference"`
 		Track      TrackSnapshot `json:"track"`
 	}{Preference: input.Preference, Track: snapshot})
 	sum := sha256.Sum256(body)
@@ -372,6 +374,7 @@ func savePreferenceOutbox(ctx context.Context, tx pgx.Tx, userID string, prefere
 				available_at=now(),
 				claimed_until=NULL,
 				delivered_at=NULL,
+				catalog_unverified_at=NULL,
 				last_error=NULL,
 				updated_at=now()
 		`, userID, preference.Track.Source, preference.Track.ID, preference.Preference, snapshotJSON, preference.Revision)

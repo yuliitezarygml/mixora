@@ -5,6 +5,7 @@ import Icon from "../components/Icon.jsx";
 import { Cover } from "../components/Primitives.jsx";
 import { TrackList } from "../components/Tracks.jsx";
 import { entityKey } from "../lib/library.js";
+import { providerPlaylistTracks } from "../lib/api.js";
 
 function trackCount(count) {
   const form = new Intl.PluralRules("ru").select(count);
@@ -14,6 +15,7 @@ function trackCount(count) {
 function PlaylistTile({ playlist, own = false }) {
   const app = useApp();
   const [menu, setMenu] = useState(false);
+  const [playing, setPlaying] = useState(false);
   const root = useRef(null);
   const pinned = own
     ? playlist.pinned === true
@@ -35,13 +37,24 @@ function PlaylistTile({ playlist, own = false }) {
     document.addEventListener("pointerdown", close);
     return () => document.removeEventListener("pointerdown", close);
   }, [menu]);
-  const play = () => {
-    const track = firstPlayable(tracks, app.settings.explicit);
-    if (!track) {
-      app.toast("В плейлисте пока нет треков.");
-      return;
+  const play = async () => {
+    setPlaying(true);
+    try {
+      let available = tracks;
+      if (!available.length && !own) {
+        available = await providerPlaylistTracks(playlist);
+      }
+      const track = firstPlayable(available, app.settings.explicit);
+      if (!track) {
+        app.toast("В плейлисте пока нет доступных треков.");
+        return;
+      }
+      app.play(track, available);
+    } catch (error) {
+      app.toast(error.message);
+    } finally {
+      setPlaying(false);
     }
-    app.play(track, tracks);
   };
   const like = () => {
     if (own) app.likeOwnPlaylist(playlist.id);
@@ -69,6 +82,7 @@ function PlaylistTile({ playlist, own = false }) {
           <button
             className="card-play"
             aria-label={`Слушать ${playlist.name}`}
+            disabled={playing}
             onClick={play}
           >
             <Icon name="play_filled_l" size={28} />

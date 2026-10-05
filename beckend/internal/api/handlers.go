@@ -106,6 +106,7 @@ func (h *Handler) ResolveHandler(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.observeSoundCloudResolve(r.Context(), raw)
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -134,6 +135,7 @@ func (h *Handler) GetTrackHandler(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.observeSoundCloudTrack(r.Context(), *track)
 
 	JSON(w, http.StatusOK, track)
 }
@@ -162,6 +164,7 @@ func (h *Handler) GetStreamHandler(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.observeSoundCloudTrack(r.Context(), *track)
 
 	streamURL, format, err := h.client.GetBestStreamURL(r.Context(), track)
 	if err != nil {
@@ -204,6 +207,7 @@ func (h *Handler) GetLyricsHandler(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.observeSoundCloudTrack(r.Context(), *track)
 
 	lyrics, err := h.client.GetTrackLyrics(r.Context(), track)
 	if err != nil {
@@ -239,6 +243,7 @@ func (h *Handler) GetRelatedHandler(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.observeSoundCloudTracks(r.Context(), res.Collection)
 
 	JSON(w, http.StatusOK, res)
 }
@@ -262,6 +267,7 @@ func (h *Handler) GetWaveformHandler(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusNotFound, "track not found")
 		return
 	}
+	h.observeSoundCloudTrack(r.Context(), *track)
 
 	wf, err := h.client.GetTrackWaveform(r.Context(), track)
 	if err != nil {
@@ -308,6 +314,7 @@ func (h *Handler) GetTrendingHandler(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.observeSoundCloudChart(r.Context(), charts)
 
 	JSON(w, http.StatusOK, charts)
 }
@@ -359,6 +366,7 @@ func (h *Handler) SearchHandler(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		h.observeSoundCloudSearchItems(r.Context(), res.Collection)
 		JSON(w, http.StatusOK, res)
 	}
 }
@@ -412,6 +420,7 @@ func (h *Handler) GetUserTracksHandler(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.observeSoundCloudTracks(r.Context(), tracks.Collection)
 
 	JSON(w, http.StatusOK, tracks)
 }
@@ -435,6 +444,7 @@ func (h *Handler) GetPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.observeSoundCloudPlaylist(r.Context(), *pl)
 
 	JSON(w, http.StatusOK, pl)
 }

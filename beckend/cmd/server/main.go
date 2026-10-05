@@ -118,7 +118,7 @@ func main() {
 		recommendationOptions = append(recommendationOptions, recommendation.WithCollaborative(gorseClient))
 		projectionOptions := events.DefaultProjectionOptions()
 		projectionOptions.OnError = func(err error) { log.Printf("[WARN] Recommendation projection: %v", err) }
-		projectionWorker, err := events.NewProjectionWorker(db, gorseapi.NewProjector(gorseClient), projectionOptions)
+		projectionWorker, err := events.NewProjectionWorker(db, gorseapi.NewProjector(gorseClient, catalogStore), projectionOptions)
 		if err != nil {
 			log.Fatalf("[FATAL] Initialize recommendation projection: %v", err)
 		}
@@ -129,7 +129,7 @@ func main() {
 		}()
 		preferenceOutboxOptions := library.DefaultPreferenceOutboxOptions()
 		preferenceOutboxOptions.OnError = func(err error) { log.Printf("[WARN] Track preference publication: %v", err) }
-		preferenceOutboxWorker, err := library.NewPreferenceOutboxWorker(db, gorseapi.NewPreferencePublisher(gorseClient), preferenceOutboxOptions)
+		preferenceOutboxWorker, err := library.NewPreferenceOutboxWorker(db, gorseapi.NewPreferencePublisher(gorseClient, catalogStore), preferenceOutboxOptions)
 		if err != nil {
 			log.Fatalf("[FATAL] Initialize track preference publication: %v", err)
 		}
@@ -242,10 +242,13 @@ func main() {
 
 	// 3. Initialize yt-dlp Extractor
 	log.Println("[INFO] Initializing Universal Extractor (yt-dlp)...")
-	ytOptions := make([]ytdlp.Option, 0, 1)
-	if cookiesPath := strings.TrimSpace(os.Getenv("MIXORA_YTDLP_COOKIES_FILE")); cookiesPath != "" {
-		ytOptions = append(ytOptions, ytdlp.WithCookiesFile(cookiesPath))
-		log.Println("[INFO] yt-dlp cookies file configured for sources that require an authenticated browser session")
+	ytOptions := []ytdlp.Option{
+		ytdlp.WithTimeout(cfg.YTDLPTimeout),
+		ytdlp.WithMaxConcurrent(cfg.YTDLPMaxConcurrent),
+	}
+	if cfg.YTDLPCookiesFile != "" {
+		ytOptions = append(ytOptions, ytdlp.WithCookiesFile(cfg.YTDLPCookiesFile))
+		log.Println("[WARN] yt-dlp shared cookies are enabled only for this explicit local development runtime")
 	}
 	ytClient := ytdlp.New(ytOptions...)
 	if ytClient.IsInstalled() {

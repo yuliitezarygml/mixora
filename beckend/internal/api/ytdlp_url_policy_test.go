@@ -49,6 +49,12 @@ func TestValidateYTDLPURLRejectsUnsafeOrUnsupportedTargets(t *testing.T) {
 		"https://app.localhost/admin",
 		"https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ",
 		"https://example.com/media",
+		"https://www.youtube.com/redirect?url=https://169.254.169.254/latest/meta-data",
+		"https://www.youtube.com/watch?v=not-a-video-id",
+		"https://youtu.be/not-a-video-id/extra-path",
+		"https://artist.bandcamp.com/login",
+		"https://artist.bandcamp.com/track/with/extra-path",
+		"https://vk.com/id1",
 	} {
 		t.Run(targetURL, func(t *testing.T) {
 			if _, err := validateYTDLPURL(targetURL); !isMediaURLPolicyError(err) {
@@ -58,11 +64,40 @@ func TestValidateYTDLPURLRejectsUnsafeOrUnsupportedTargets(t *testing.T) {
 	}
 }
 
+func TestValidateYTDLPURLAcceptsOnlyKnownMediaPaths(t *testing.T) {
+	t.Parallel()
+	for _, targetURL := range []string{
+		"https://www.youtube.com/shorts/dQw4w9WgXcQ",
+		"https://www.youtube.com/embed/dQw4w9WgXcQ",
+		"https://vk.com/video-1_2",
+		"https://vkvideo.ru/clip-1_2",
+		"https://vk.com/video_ext.php?oid=-1&id=2",
+	} {
+		if _, err := validateYTDLPURL(targetURL); err != nil {
+			t.Fatalf("validateYTDLPURL(%q) error = %v", targetURL, err)
+		}
+	}
+}
+
 func TestValidateYouTubeURLRejectsOtherSupportedProviders(t *testing.T) {
 	t.Parallel()
 
 	if _, err := validateYouTubeURL("https://artist.bandcamp.com/track/a-public-track"); !isMediaURLPolicyError(err) {
 		t.Fatalf("validateYouTubeURL() error = %v, want policy error", err)
+	}
+}
+
+func TestNamedProviderValidatorsRejectAValidDifferentProvider(t *testing.T) {
+	t.Parallel()
+
+	if _, err := validateBandcampURL("https://www.youtube.com/watch?v=dQw4w9WgXcQ"); !isMediaURLPolicyError(err) {
+		t.Fatalf("validateBandcampURL() error = %v, want policy error", err)
+	}
+	if _, err := validateVKURL("https://artist.bandcamp.com/track/a-public-track"); !isMediaURLPolicyError(err) {
+		t.Fatalf("validateVKURL() error = %v, want policy error", err)
+	}
+	if _, err := validateYTDLPURL("https://artist.bandcamp.com/album/a-public-release"); !isMediaURLPolicyError(err) {
+		t.Fatalf("validateYTDLPURL(album) error = %v, want policy error while albums have no playlist API", err)
 	}
 }
 
@@ -83,13 +118,13 @@ func TestYTDLPHandlersRejectUnsafeURLsBeforeRunningExtractor(t *testing.T) {
 			handler: h.UniversalExtractHandler,
 		},
 		{
-			name:    "bandcamp route rejects unsupported host",
-			path:    "/api/v1/bandcamp/resolve?url=" + url.QueryEscape("https://example.com/track"),
+			name:    "bandcamp route rejects another supported host",
+			path:    "/api/v1/bandcamp/resolve?url=" + url.QueryEscape("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
 			handler: h.BandcampResolveHandler,
 		},
 		{
-			name:    "VK route rejects credentials",
-			path:    "/api/v1/vk/resolve?url=" + url.QueryEscape("https://user@vk.com/audio-1_2"),
+			name:    "VK route rejects another supported host",
+			path:    "/api/v1/vk/resolve?url=" + url.QueryEscape("https://artist.bandcamp.com/track/a-public-track"),
 			handler: h.VKResolveHandler,
 		},
 		{

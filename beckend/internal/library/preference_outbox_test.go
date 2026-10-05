@@ -48,6 +48,9 @@ func TestPreferenceOutboxWorkerPublishesCurrentStateAndMarksDelivered(t *testing
 	if len(backend.failed) != 0 {
 		t.Fatalf("failure marks = %#v", backend.failed)
 	}
+	if backend.requeueCalls != 1 || !backend.requeueAt.Equal(now) {
+		t.Fatalf("catalog requeue = calls=%d at=%s", backend.requeueCalls, backend.requeueAt)
+	}
 }
 
 func TestPreferenceOutboxWorkerRetriesPublisherFailureWithBoundedBackoff(t *testing.T) {
@@ -142,6 +145,33 @@ func TestPreferenceOutboxWorkerSkipsAClaimReplacedByNewerState(t *testing.T) {
 	}
 }
 
+func TestPreferenceOutboxWorkerMarksUnverifiedTrackForCatalogReconciliation(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.October, 5, 13, 0, 0, 0, time.UTC)
+	item := testPreferenceOutboxItem(PreferenceLiked, 1, 1)
+	backend := &fakePreferenceOutboxBackend{items: []preferenceOutboxItem{item}}
+	publisher := &fakeTrackPreferencePublisher{err: ErrPreferenceTrackUnverified}
+	worker, err := newPreferenceOutboxWorker(backend, publisher, DefaultPreferenceOutboxOptions())
+	if err != nil {
+		t.Fatalf("newPreferenceOutboxWorker() error = %v", err)
+	}
+	worker.now = func() time.Time { return now }
+
+	delivered, err := worker.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if delivered != 0 {
+		t.Fatalf("delivered = %d, want 0", delivered)
+	}
+	if len(backend.unverified) != 1 || backend.unverified[0].item.TrackID != "42" || !backend.unverified[0].at.Equal(now) {
+		t.Fatalf("catalog-unverified marks = %#v", backend.unverified)
+	}
+	if len(backend.failed) != 0 || len(backend.delivered) != 0 {
+		t.Fatalf("unverified bookkeeping = failed=%#v delivered=%#v", backend.failed, backend.delivered)
+	}
+}
+
 func TestPreferenceOutboxRetryDelayIsExponentialAndBounded(t *testing.T) {
 	t.Parallel()
 	initial, maximum := time.Second, 8*time.Second
@@ -181,17 +211,26 @@ func (p *fakeTrackPreferencePublisher) PublishTrackPreference(_ context.Context,
 }
 
 type fakePreferenceOutboxBackend struct {
-	items      []preferenceOutboxItem
-	claimErr   error
-	current    bool
-	currentSet bool
-	currentErr error
-	checks     []preferenceOutboxItem
-	claimNow   time.Time
-	claimLease time.Time
-	claimBatch int
-	delivered  []fakePreferenceDelivery
-	failed     []fakePreferenceFailure
+	items        []preferenceOutboxItem
+	claimErr     error
+	current      bool
+	currentSet   bool
+	currentErr   error
+	checks       []preferenceOutboxItem
+	claimNow     time.Time
+	claimLease   time.Time
+	claimBatch   int
+	requeueCalls int
+	requeueAt    time.Time
+	delivered    []fakePreferenceDelivery
+	unverified   []fakePreferenceDelivery
+	failed       []fakePreferenceFailure
+}
+
+func (f *fakePreferenceOutboxBackend) requeueCatalogVerifiedPreferenceOutbox(_ context.Context, now time.Time) error {
+	f.requeueCalls++
+	f.requeueAt = now
+	return nil
 }
 
 type fakePreferenceDelivery struct {
@@ -223,6 +262,11 @@ func (f *fakePreferenceOutboxBackend) isCurrentPreferenceOutbox(_ context.Contex
 
 func (f *fakePreferenceOutboxBackend) markPreferenceOutboxDelivered(_ context.Context, item preferenceOutboxItem, at time.Time) error {
 	f.delivered = append(f.delivered, fakePreferenceDelivery{item: item, at: at})
+	return nil
+}
+
+func (f *fakePreferenceOutboxBackend) markPreferenceOutboxCatalogUnverified(_ context.Context, item preferenceOutboxItem, at time.Time) error {
+	f.unverified = append(f.unverified, fakePreferenceDelivery{item: item, at: at})
 	return nil
 }
 

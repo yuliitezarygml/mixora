@@ -35,3 +35,28 @@ test("long queues keep the active track in desktop sync and local restore", () =
   assert.equal(local.index, 25);
   assert.equal(local.queue[local.index].id, "35");
 });
+
+test("external playback snapshots retain only the durable source page", () => {
+  const track = {
+    id: "bc-1",
+    source: "bandcamp",
+    title: "Saved track",
+    artist: "Artist",
+    permalink: "https://artist.bandcamp.com/track/saved-track",
+    audio_url: "https://temporary.example/audio",
+    secret: "never persist",
+  };
+  const remote = playbackSnapshot(track, true, 0, [track]);
+  const local = playerStorageSnapshot(track, 0, 0, [track]);
+
+  for (const snapshot of [
+    remote.track,
+    remote.queue[0],
+    local.track,
+    local.queue[0],
+  ]) {
+    assert.equal(snapshot.permalink, track.permalink);
+    assert.equal(snapshot.audio_url, undefined);
+    assert.equal(snapshot.secret, undefined);
+  }
+});

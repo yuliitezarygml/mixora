@@ -128,13 +128,17 @@ services:
       MIXORA_EMBEDDINGS_DIMENSIONS: ${MIXORA_EMBEDDINGS_DIMENSIONS:-768}
       MIXORA_EMBEDDINGS_TIMEOUT: ${MIXORA_EMBEDDINGS_TIMEOUT:-2m}
       MIXORA_EMBEDDINGS_BATCH_SIZE: ${MIXORA_EMBEDDINGS_BATCH_SIZE:-16}
+      MIXORA_YTDLP_TIMEOUT: ${MIXORA_YTDLP_TIMEOUT:-30s}
+      MIXORA_YTDLP_MAX_CONCURRENT: ${MIXORA_YTDLP_MAX_CONCURRENT:-2}
       # Public metadata search works without these. Supplying Spotify
       # credentials switches the adapter to Spotify's official Web API.
       SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
       SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
       # Optional in-container path; mount a cookies.txt file only when a
-      # provider such as VK requires a signed-in browser session.
+      # single-user local development runtime needs a signed-in browser
+      # session. This compose file deliberately mounts no cookies.
       MIXORA_YTDLP_COOKIES_FILE: ${MIXORA_YTDLP_COOKIES_FILE:-}
+      MIXORA_ALLOW_SHARED_YTDLP_COOKIES: ${MIXORA_ALLOW_SHARED_YTDLP_COOKIES:-false}
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
     depends_on:

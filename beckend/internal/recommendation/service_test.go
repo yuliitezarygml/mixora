@@ -1,16 +1,130 @@
 package recommendation
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/iulian/soundcloud-go/internal/music"
 )
+
+type candidateCatalogStub struct {
+	tracks []music.Track
+	saved  [][]music.Track
+}
+
+func (c *candidateCatalogStub) Save(_ context.Context, tracks []music.Track) error {
+	c.saved = append(c.saved, append([]music.Track(nil), tracks...))
+	return nil
+}
+
+func (c *candidateCatalogStub) Find(_ context.Context, _ []string) ([]music.Track, error) {
+	return nil, nil
+}
+
+func (c *candidateCatalogStub) ListCandidates(_ context.Context, _ int) ([]music.Track, error) {
+	return append([]music.Track(nil), c.tracks...), nil
+}
+
+type collaborativeStub struct {
+	ids []string
+}
+
+func (c collaborativeStub) UpsertUser(context.Context, string) error { return nil }
+
+func (c collaborativeStub) UpsertItems(context.Context, []music.Track) error { return nil }
+
+func (c collaborativeStub) Recommend(context.Context, string, int) ([]string, error) {
+	return append([]string(nil), c.ids...), nil
+}
 
 func TestBuildQueryUsesContext(t *testing.T) {
 	t.Parallel()
 	got := BuildQuery(Preferences{Activity: "any", Mood: "any"}, Context{Artist: "Massive Attack"}, nil, 0)
 	if got != "Massive Attack" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestRecommendUsesObservedMultiSourceCatalogWithoutSoundCloud(t *testing.T) {
+	t.Parallel()
+	catalog := &candidateCatalogStub{tracks: []music.Track{
+		{Source: "spotify", ID: "preview", Title: "Spotify preview", Artist: "One", Access: "preview"},
+		{Source: "youtube", ID: "video", Title: "YouTube audio", Artist: "Two", Access: "playable"},
+		{Source: "bandcamp", ID: "release", Title: "Bandcamp audio", Artist: "Three", Access: "playable"},
+		{Source: "spotify", ID: "connect-only", Title: "Blocked", Artist: "Four", Access: "blocked"},
+	}}
+	service := New(nil, WithCatalog(catalog))
+
+	result, err := service.Recommend(context.Background(), Request{Explicit: true})
+	if err != nil {
+		t.Fatalf("recommend from catalog: %v", err)
+	}
+	if len(result.Tracks) != 3 {
+		t.Fatalf("tracks = %#v, want three playable catalog tracks", result.Tracks)
+	}
+	seen := map[string]bool{}
+	for _, track := range result.Tracks {
+		seen[track.Key()] = true
+		if track.Access == "blocked" {
+			t.Fatalf("blocked track leaked into Wave: %#v", track)
+		}
+	}
+	for _, key := range []string{"spotify:preview", "youtube:video", "bandcamp:release"} {
+		if !seen[key] {
+			t.Fatalf("catalog candidate %q missing from Wave: %#v", key, result.Tracks)
+		}
+	}
+	if len(catalog.saved) != 0 {
+		t.Fatalf("reading catalog fallback must not refresh its rows: %#v", catalog.saved)
+	}
+}
+
+func TestRecommendReservesCatalogSlotsForNewProviderSources(t *testing.T) {
+	t.Parallel()
+	soundcloud := make([]music.Track, 0, 30)
+	personalizedIDs := make([]string, 0, 30)
+	for index := 0; index < 30; index++ {
+		track := music.Track{
+			Source: "soundcloud", ID: fmt.Sprintf("sc-%02d", index),
+			Title: fmt.Sprintf("SoundCloud %d", index), Artist: fmt.Sprintf("Artist %d", index),
+			Access: "playable",
+		}
+		soundcloud = append(soundcloud, track)
+		personalizedIDs = append(personalizedIDs, track.Key())
+	}
+	external := []music.Track{
+		{Source: "spotify", ID: "preview", Title: "Spotify preview", Artist: "Spotify artist", Access: "preview"},
+		{Source: "youtube", ID: "video", Title: "YouTube audio", Artist: "YouTube artist", Access: "playable"},
+		{Source: "bandcamp", ID: "release", Title: "Bandcamp audio", Artist: "Bandcamp artist", Access: "playable"},
+	}
+	catalog := &candidateCatalogStub{tracks: append(external, soundcloud...)}
+	service := New(nil, WithCatalog(catalog), WithCollaborative(collaborativeStub{ids: personalizedIDs}))
+
+	result, err := service.Recommend(context.Background(), Request{UserID: "listener", Explicit: true})
+	if err != nil {
+		t.Fatalf("recommend: %v", err)
+	}
+	if len(result.Tracks) != 30 {
+		t.Fatalf("tracks length = %d, want 30", len(result.Tracks))
+	}
+	seen := make(map[string]bool, len(result.Tracks))
+	for _, track := range result.Tracks {
+		seen[track.Key()] = true
+	}
+	for _, key := range []string{"spotify:preview", "youtube:video", "bandcamp:release"} {
+		if !seen[key] {
+			t.Fatalf("catalog source %q was starved by a one-source collaborative result: %#v", key, result.Tracks)
+		}
+	}
+}
+
+func TestRecommendIsUnavailableOnlyWithoutAnyCandidateSource(t *testing.T) {
+	t.Parallel()
+	_, err := New(nil).Recommend(context.Background(), Request{Explicit: true})
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("error = %v, want ErrUnavailable", err)
 	}
 }
 

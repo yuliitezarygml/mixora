@@ -8,6 +8,13 @@ export class ApiError extends Error {
   }
 }
 
+// `navigator.onLine` is only a browser hint, but it is useful for choosing a
+// clear recovery path in the UI. Keep the fallback true for Node tests and
+// future non-browser renderers where `navigator` is not present.
+export function networkIsOnline() {
+  return typeof navigator === "undefined" || navigator.onLine !== false;
+}
+
 const errorDetails = (value) =>
   value !== null && typeof value === "object" ? value : null;
 
@@ -38,15 +45,29 @@ export function unwrapApiResponse(value, status = 200) {
 }
 
 export async function api(path, { signal, ...options } = {}) {
-  const response = await fetch(`/api/v1${path}`, {
-    credentials: "include",
-    signal,
-    ...options,
-    headers: {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...options.headers,
-    },
-  });
+  let response;
+  try {
+    response = await fetch(`/api/v1${path}`, {
+      credentials: "include",
+      signal,
+      ...options,
+      headers: {
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...options.headers,
+      },
+    });
+  } catch (error) {
+    // An aborted request is a normal lifecycle event for route changes. Keep
+    // its native name so callers can discard it rather than show a failure.
+    if (error?.name === "AbortError") throw error;
+    throw new ApiError(
+      networkIsOnline()
+        ? "Не удалось связаться с сервером. Попробуйте ещё раз."
+        : "Нет подключения к интернету.",
+      0,
+      { code: "network_unavailable" },
+    );
+  }
   if (response.status === 204) return null;
   let data;
   try {
@@ -63,14 +84,21 @@ export async function api(path, { signal, ...options } = {}) {
       403: "Этот трек недоступен для воспроизведения.",
       409: "Этот адрес уже зарегистрирован.",
       429: "Слишком много запросов. Попробуйте через минуту.",
-      502: "Не удалось получить аудио от SoundCloud. Попробуйте ещё раз.",
+      500: "Музыкальный сервис временно недоступен.",
+      502: "Источник временно не отвечает. Попробуйте ещё раз.",
       503: "Музыкальный сервис временно недоступен.",
+      504: "Источник отвечает слишком долго. Попробуйте ещё раз.",
     };
     const details = errorDetails(data?.error);
+    // Do not expose extractor/provider stderr in the UI. It can contain a
+    // transient CDN URL, a cookie hint, or implementation-only diagnostics.
+    const safeServerMessage =
+      response.status >= 500
+        ? messages[response.status] || "Музыкальный сервис временно недоступен."
+        : (details && errorMessage(details)) || errorMessage(data?.error);
     throw new ApiError(
-      (details && errorMessage(details)) ||
+      safeServerMessage ||
         messages[response.status] ||
-        errorMessage(data?.error) ||
         "Не удалось выполнить запрос.",
       response.status,
       details,
@@ -183,9 +211,106 @@ export function sourceLabel(source) {
     vk: "VK",
     vkontakte: "VK",
     bandcamp: "Bandcamp",
+    external: "Внешний источник",
     local: "Mixora",
   };
   return labels[normalized] || displayName(source) || "Источник";
+}
+
+// Converts transport details into deliberately small, user-facing states.
+// Components should render this instead of a raw `Error.message`, because a
+// browser-level network error is not meaningful to a listener and upstream
+// services are allowed to change their diagnostic text at any time.
+export function presentRequestFailure(
+  error,
+  { source = "", online = networkIsOnline() } = {},
+) {
+  const status = Number(error?.status) || 0;
+  const code = String(error?.code || "");
+  const message =
+    typeof error?.message === "string" ? error.message.trim() : "";
+  const sourceName = source ? sourceLabel(source) : "Источник";
+  const retry = (kind, title, text) => ({
+    kind,
+    title,
+    text,
+    retryable: true,
+    action: "retry",
+  });
+
+  if (!online) {
+    return retry(
+      "offline",
+      "Нет подключения к интернету",
+      "Проверьте соединение. Сохранённые действия останутся на устройстве и синхронизируются после подключения.",
+    );
+  }
+  if (status === 0 || code === "network_unavailable") {
+    return retry(
+      "network",
+      "Не удалось связаться с сервером",
+      "Попробуйте ещё раз. Если проблема не исчезает, проверьте подключение к Mixora.",
+    );
+  }
+  if (status === 401) {
+    return {
+      kind: "authentication",
+      title: "Войдите, чтобы открыть каталог",
+      text:
+        message ||
+        "Для работы с подключёнными источниками нужна сессия Mixora.",
+      retryable: false,
+      action: "sign-in",
+    };
+  }
+  if (status === 403) {
+    return {
+      kind: "forbidden",
+      title: "Источник ограничил доступ",
+      text:
+        message ||
+        "Этот трек или раздел сейчас недоступен для воспроизведения.",
+      retryable: false,
+      action: "none",
+    };
+  }
+  if (status === 404) {
+    return {
+      kind: "not-found",
+      title: "Музыка не найдена",
+      text: message || "Попробуйте другой запрос или ссылку на трек.",
+      retryable: false,
+      action: "none",
+    };
+  }
+  if (status === 400 || status === 422 || status === 409) {
+    return {
+      kind: "request",
+      title: "Проверьте запрос",
+      text: message || "Сервис не смог обработать этот запрос.",
+      retryable: false,
+      action: "none",
+    };
+  }
+  if (status === 429) {
+    return retry(
+      "rate-limit",
+      "Слишком много запросов",
+      "Подождите немного и повторите попытку.",
+    );
+  }
+  if (status >= 500) {
+    return retry(
+      "upstream",
+      `${sourceName} временно недоступен`,
+      "Источник не ответил вовремя. Попробуйте повторить запрос.",
+    );
+  }
+  return retry(
+    "unknown",
+    "Не удалось загрузить музыку",
+    "Попробуйте повторить запрос.",
+  );
 }
 
 function externalSource(value, webpageURL = "") {
@@ -198,9 +323,7 @@ function externalSource(value, webpageURL = "") {
   if (raw.startsWith("vk") || raw.startsWith("vkontakte")) return "vk";
   if (raw.startsWith("bandcamp")) return "bandcamp";
   if (raw && raw !== "generic") {
-    const compact = raw
-      .replace(/[^a-z0-9._-]+/g, "-")
-      .replace(/^-+|-+$/g, "");
+    const compact = raw.replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
     if (compact) return compact;
   }
 
@@ -210,7 +333,11 @@ function externalSource(value, webpageURL = "") {
     const host = new URL(webpageURL).hostname
       .toLowerCase()
       .replace(/^www\./, "");
-    if (host === "youtu.be" || host === "youtube.com" || host.endsWith(".youtube.com")) {
+    if (
+      host === "youtu.be" ||
+      host === "youtube.com" ||
+      host.endsWith(".youtube.com")
+    ) {
       return "youtube";
     }
     if (host === "bandcamp.com" || host.endsWith(".bandcamp.com")) {

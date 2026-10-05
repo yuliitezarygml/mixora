@@ -33,7 +33,8 @@ user_track_preferences + idempotency receipt + durable outbox
 Wave context --> EmbeddingGemma query --> pgvector cold-start candidates
           |
           v
-content taste/query RRF --> Gorse/content blend 2:1 --> rules/filters
+content taste/query RRF --> Gorse/content blend 2:1 --+
+recent nonblocked track_catalog candidates -----------+--> rules/filters
           |
           v
 POST /api/v1/wave --> tracks + session_id + model_version
@@ -48,6 +49,17 @@ metadata snapshot хранится в `track_catalog`; legacy SoundCloud URN/pat
 ID нормализуются в едином music API-adapter клиента, на API-границе и в
 миграциях данных, а не в UI-компонентах.
 
+`track_catalog` также является provider-neutral candidate pool Wave: к каждому
+запросу добавляются до 100 недавно наблюдённых nonblocked snapshots SoundCloud,
+Spotify preview, YouTube, Bandcamp и VK наряду с Gorse/content и live SoundCloud
+поиском. При чтении этого пула Wave не записывает кандидаты обратно, поэтому
+`updated_at` отражает реальное наблюдение, а не бесконечную выдачу одного и того
+же недавнего набора. Если
+полная collaborative-страница состоит из одного source, Wave оставляет до 10%
+детерминированных позиций для доступных ранее отсутствовавших sources, максимум
+по одному треку на source. Это ограниченная exploration-квота после всех
+обычных фильтров (access, explicit, dislikes), а не замена Gorse ranking.
+
 ## Collaborative-контур
 
 - PostgreSQL является долговечным журналом событий; Gorse — перестраиваемым
@@ -58,7 +70,10 @@ ID нормализуются в едином music API-adapter клиента, 
   `user + session + track + type`: новый случайный key не позволит повторно
   усилить один и тот же сигнал в одной выдаче.
 - Проектор пересчитывает полный агрегат `user + item + event_type`, отправляет
-  его в Gorse через идемпотентный `PUT` и только потом отмечает события.
+  его в Gorse через идемпотентный `PUT` и только потом отмечает события. Перед
+  этим он подтверждает `source:id` в `track_catalog`, upsert-ит item из
+  server-side metadata и terminal-skip-ит неизвестный ID без создания item;
+  временная ошибка catalog остаётся retryable.
 - PostgreSQL advisory lock не позволяет нескольким API-репликам перезаписать
   агрегат устаревшим значением.
 - Каждая Wave получает UUID `session_id`; feedback разрешён только для трека,
@@ -92,6 +107,16 @@ Like, dislike и возврат в нейтральное состояние б�
   противоположный dislike и записывает like в Gorse; для `disliked` делает
   обратное; `neutral` удаляет оба сигнала. Устаревшие pending-версии
   coalesced, поэтому наружу публикуется последнее состояние.
+- Для `liked`/`disliked` worker сверяет канонический `source:id` с
+  `track_catalog` и отправляет только подтверждённый server-side snapshot.
+  Неизвестный legacy/client snapshot остаётся локальным желаемым состоянием,
+  но terminal-skip для Gorse и не может создать recommender item. Для `neutral`
+  worker без upsert item удаляет возможный старый Gorse feedback по
+  каноническому ключу; временная ошибка каталога остаётся retryable. Обычные
+  provider track-ответы сохраняются в catalog до реакции пользователя; редкий
+  offline/legacy terminal-skip получает durable marker и автоматически
+  переотправляется после появления подтверждённого трека. Обычные успешно
+  delivered записи при новых наблюдениях не переигрываются.
 - Общий advisory lock разделяют event projector и worker предпочтений. Их
   публикации в Gorse выполняются последовательно; если сначала успел старый
   event-агрегат, следующая публикация текущего состояния его исправляет. Если Gorse
@@ -148,8 +173,9 @@ dislike не становятся положительными seed. Если д
 
 Content-кандидаты вкуса и query объединяются weighted reciprocal-rank fusion.
 Затем итоговый список смешивает два collaborative-кандидата Gorse и один
-content-кандидат, после чего применяются существующие фильтры и правила
-разнообразия. Это порядок слияния, а не обученный числовой score.
+content-кандидат, добавляет recent provider-neutral catalog pool, после чего
+применяются существующие фильтры и правила разнообразия. Это порядок слияния,
+а не обученный числовой score.
 
 Каждый внешний слой допускает отказ:
 
@@ -235,6 +261,9 @@ legacy `payload.playlists`: эти corrective migrations восстанавли�
 - offline evaluation, A/B-ready assignment и продуктовые dashboards;
 - управляемая exploration и объяснение причины для каждого трека;
 - CLAP/audio embeddings — только после измеримого сравнения с text embeddings.
+- trusted-origin CSRF protection для cookie-auth mutation после появления
+  production reverse proxy; локальный Vite proxy сейчас не должен терять
+  требуемый Origin.
 
 Контуры предпочтений, истории и плейлистов покрыты целевыми Go unit/HTTP
 contract tests и клиентскими unit tests: сохранение и replay состояния,
