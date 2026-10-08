@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Mixora Mobile",
   "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "com.mixora.mobile",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://127.0.0.1:5176",
@@ -13,19 +13,21 @@
     "windows": [
       {
         "title": "Mixora Mobile",
-        "width": 800,
-        "height": 600,
+        "label": "main",
+        "width": 1100,
+        "height": 760,
         "resizable": true,
         "fullscreen": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https:; media-src 'self' https: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-src 'none'",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https: ws:; media-src 'self' https: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-src 'none'"
     }
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["app"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -34,7 +36,11 @@
       "icons/icon.ico"
     ],
     "android": {
+      "minSdkVersion": 26,
       "debugApplicationIdSuffix": ".debug"
+    },
+    "iOS": {
+      "minimumSystemVersion": "16.0"
     }
   }
 }
