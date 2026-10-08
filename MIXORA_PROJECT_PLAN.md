@@ -977,6 +977,12 @@ embedding/httpapi tests и browser play/save/reload. Это функционал
   secure persisted session, native WS, физические устройства и release signing.
   Детали и ограничения — `app-andorid-ios/QA.md`, следующий порядок — `PLAN.md`.
 
+- 2026-10-08: исправлен чёрный экран mobile `native:dev`: proxy `/api` ошибочно
+  отправлял `api.json` на backend; правило сужено до `/api/`, добавлен live-Vite
+  regression test. Убрана промежуточная заставка: macOS WebView сразу открывает
+  основной интерфейс. 11/11 mobile и 129/129 shared client tests проходят,
+  Vite build проверен; native audio/session/signing остаются этапами M2–M4.
+
 ## 19. Definition of Done всего проекта
 
 Проект считается законченным, когда новый пользователь может в чистой среде

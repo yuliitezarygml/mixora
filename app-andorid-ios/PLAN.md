@@ -29,6 +29,8 @@
 - [x] Regression tests общего клиента, transport tests, web build, Rust checks.
 - [x] Генерация Android/iOS проектов и проверка доступного toolchain.
 - [x] ARM64 Android debug APK и unsigned iOS simulator archive собраны.
+- [x] Исправлен dev startup: `api.json` не попадает в backend proxy; отдельная
+      заставка удалена, основной интерфейс открывается сразу (macOS WebView QA).
 
 Результаты и ограничения: `QA.md`. M1 подтверждает оболочку и transport,
 не полный вход/воспроизведение на настоящем телефоне и не фоновый звук.

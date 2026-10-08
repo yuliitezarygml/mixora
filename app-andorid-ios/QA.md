@@ -3,8 +3,8 @@
 ## Подтверждено
 
 - `npm ci` воспроизводимо устанавливает pinned dependencies из lock-файла.
-- 10/10 mobile JS tests: IPC contract, cancellation, 204, pending native media,
-  единый API facade/config, shared 43 stylesheets и toolchain wrapper.
+- 11/11 mobile JS tests: IPC contract, cancellation, 204, pending native media,
+  единый API facade/config, shared 43 stylesheets, toolchain wrapper и dev startup.
 - 129/129 общих client tests: существующий web/Electron transport остаётся
   default, native adapter установлен отдельно; provider-neutral playback
   проходит через новый seam без изменения browser-логики.
@@ -27,6 +27,18 @@
   мобильная навигация, обложки и нижний плеер отображаются; ошибок JS нет.
   Browser использует отдельный существующий тестовый аккаунт, это **не**
   подтверждение native login или mobile playback.
+- Исправлен чёрный экран `native:dev`: Vite proxy `/api` перехватывал
+  `/api.json?import` и возвращал backend 404 вместо JS-модуля. Теперь proxy
+  ограничен `/api/`; `api.json` остаётся единственным файлом server settings.
+  Новый тест с настоящим Vite и изолированным HTTP backend сначала воспроизвёл
+  404, после исправления проверяет загрузку модуля и проксирование auth route.
+  Правило общее для dev и preview. Подробности prefix matching:
+  [Vite server.proxy](https://vite.dev/config/server-options#server-proxy).
+- Промежуточный native intro удалён по запросу пользователя. Проверен прямой
+  старт основного UI в macOS WebView на `5176`: тот же dev-бинарник временно
+  помещён в ignored QA `.app` для доступа UI-проверки. Главная и плеер видны
+  сразу, без кнопки «Открыть приложение». В browser dev ошибок JS не найдено.
+  Это не проверка background audio или login на физическом телефоне.
 
 ## Артефакты (ignored build output)
 
@@ -34,6 +46,7 @@
 - iOS simulator: `src-tauri/gen/apple/build/mixora-mobile_iOS.xcarchive`
 - Mac QA shell: `src-tauri/target/debug/bundle/macos/Mixora Mobile.app`
 - Responsive screenshot: `qa/collection-phone.png`
+- Native direct startup screenshot: `qa/native-direct-start.png`
 
 ## Не подтверждено / не завершено
 
