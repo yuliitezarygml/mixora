@@ -5,7 +5,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import App from "../../mixora-client/src/App.jsx";
 import { AppProvider } from "../../mixora-client/src/state/AppContext.jsx";
 import { configureClientRuntime } from "../../mixora-client/src/lib/clientRuntime.js";
-import { createNativeTransport } from "./nativeTransport.js";
+import { createMobileAPI } from "./api.js";
 import "../../mixora-client/src/styles/global.css";
 import "../../mixora-client/src/styles/integration.css";
 import "./native.css";
@@ -36,7 +36,7 @@ function NativeApp() {
   );
 }
 
-if (isTauri()) configureClientRuntime(createNativeTransport(invoke));
+if (isTauri()) configureClientRuntime(createMobileAPI(invoke));
 const root = import.meta.hot?.data.root ?? createRoot(document.getElementById("root"));
 if (import.meta.hot) import.meta.hot.data.root = root;
 root.render(<ErrorBoundary><NativeApp /></ErrorBoundary>);

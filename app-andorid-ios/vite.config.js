@@ -10,9 +10,10 @@ const workspace = fileURLToPath(new URL("..", import.meta.url));
 const port = 5176;
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, appRoot, "MIXORA_");
-  const apiOrigin = process.env.MIXORA_API_URL || env.MIXORA_API_URL || "http://127.0.0.1:8080";
-  const host = process.env.TAURI_DEV_HOST || "127.0.0.1";
+  const env = loadEnv(mode, appRoot, "TAURI_");
+  const config = JSON.parse(readFileSync(`${appRoot}/api.json`, "utf8"));
+  const apiOrigin = process.env.MIXORA_API_URL || config.serverUrl;
+  const host = process.env.TAURI_DEV_HOST || env.TAURI_DEV_HOST || "127.0.0.1";
   const proxy = {
     "/api": {
       target: apiOrigin, changeOrigin: true, ws: true,
@@ -38,7 +39,7 @@ export default defineConfig(({ mode }) => {
     resolve: { dedupe: ["react", "react-dom", "react-router", "react-router-dom"] },
     server: {
       host, port, strictPort: true,
-      ...(process.env.TAURI_DEV_HOST ? { hmr: { protocol: "ws", host, port: 5177 } } : {}),
+      ...(host !== "127.0.0.1" ? { hmr: { protocol: "ws", host, port: 5177 } } : {}),
       fs: { allow: [workspace] },
       proxy,
       watch: { ignored: ["**/src-tauri/**"] },

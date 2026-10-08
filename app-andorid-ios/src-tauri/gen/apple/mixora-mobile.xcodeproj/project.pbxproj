@@ -1,0 +1,464 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		30367AFAC70FD440FCD3967E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CD1BA81C42EAF293C6DB67FA /* Assets.xcassets */; };
+		440D9D69F907C2CF6002E93F /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5B5499DA5F8E53D5047288A5 /* libapp.a */; };
+		5F5D73750CEB27492C908B17 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = DE7A2E6B517DC58AFD50EE26 /* assets */; };
+		69BC1C2357B4C3F4812E1EBA /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C82EA8879BBA86F7B371C96C /* Metal.framework */; };
+		6FC2726457B5C5061D77852D /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = A4A18287747FC15FAF3EB6DD /* main.mm */; };
+		739EAE709AA8CCAE610CC9C4 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B3DDC52D3280EA1744E9E200 /* MetalKit.framework */; };
+		8DC667DD2D33550A14693551 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DBEFBE04E8533D1B9524E293 /* WebKit.framework */; };
+		8E50C23BBE9CC7F86949D2DD /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 78CFBC3FA132508A62492C6C /* Security.framework */; };
+		A5C39D4A9B16E98142F5464C /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E513DE28A9894FD796009AD8 /* QuartzCore.framework */; };
+		B18001CDB5685432660B57C0 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 5D97500BE12ED463BE63C97A /* LaunchScreen.storyboard */; };
+		CEACC9ABDC80CCE15B655872 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8509BF8FF2989D26FDF3D58C /* CoreGraphics.framework */; };
+		EDC55E3211B09BAAA1A90520 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9305337EA3BF93B0D9096DCB /* UIKit.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		3B3B7FD0AC50700B0110E53B /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
+		437209303BF69A9712ED9D37 /* mixora-mobile_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "mixora-mobile_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		5B5499DA5F8E53D5047288A5 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
+		5D97500BE12ED463BE63C97A /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		65F3CCAE197D7416755A96D7 /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
+		68992BCD878A07D2AA8BEE7B /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
+		78CFBC3FA132508A62492C6C /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		7BDEB3B4B94CC12FC3F3E8BB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		8509BF8FF2989D26FDF3D58C /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		9305337EA3BF93B0D9096DCB /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		A4A18287747FC15FAF3EB6DD /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+		B3DDC52D3280EA1744E9E200 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		B5522F585AF07B0AA781DAF4 /* backend.rs */ = {isa = PBXFileReference; path = backend.rs; sourceTree = "<group>"; };
+		C82EA8879BBA86F7B371C96C /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		CD1BA81C42EAF293C6DB67FA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		DA0C9C0DE42C9EB7C775DC53 /* mixora-mobile_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "mixora-mobile_iOS.entitlements"; sourceTree = "<group>"; };
+		DBEFBE04E8533D1B9524E293 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		DE7A2E6B517DC58AFD50EE26 /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
+		E1585A66F44948EFD322E3C5 /* backend_tests.rs */ = {isa = PBXFileReference; path = backend_tests.rs; sourceTree = "<group>"; };
+		E513DE28A9894FD796009AD8 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		5D6B94DDEDE2AA8706CE26BD /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				440D9D69F907C2CF6002E93F /* libapp.a in Frameworks */,
+				CEACC9ABDC80CCE15B655872 /* CoreGraphics.framework in Frameworks */,
+				69BC1C2357B4C3F4812E1EBA /* Metal.framework in Frameworks */,
+				739EAE709AA8CCAE610CC9C4 /* MetalKit.framework in Frameworks */,
+				A5C39D4A9B16E98142F5464C /* QuartzCore.framework in Frameworks */,
+				8E50C23BBE9CC7F86949D2DD /* Security.framework in Frameworks */,
+				EDC55E3211B09BAAA1A90520 /* UIKit.framework in Frameworks */,
+				8DC667DD2D33550A14693551 /* WebKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		141947B16497CD50A729F958 /* Externals */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Externals;
+			sourceTree = "<group>";
+		};
+		4A57855004770F20157506E0 /* mixora-mobile_iOS */ = {
+			isa = PBXGroup;
+			children = (
+				7BDEB3B4B94CC12FC3F3E8BB /* Info.plist */,
+				DA0C9C0DE42C9EB7C775DC53 /* mixora-mobile_iOS.entitlements */,
+			);
+			path = "mixora-mobile_iOS";
+			sourceTree = "<group>";
+		};
+		602A13352F9543CDDAA3D123 /* bindings */ = {
+			isa = PBXGroup;
+			children = (
+				68992BCD878A07D2AA8BEE7B /* bindings.h */,
+			);
+			path = bindings;
+			sourceTree = "<group>";
+		};
+		60481C70B2B92E546F730034 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				8509BF8FF2989D26FDF3D58C /* CoreGraphics.framework */,
+				5B5499DA5F8E53D5047288A5 /* libapp.a */,
+				C82EA8879BBA86F7B371C96C /* Metal.framework */,
+				B3DDC52D3280EA1744E9E200 /* MetalKit.framework */,
+				E513DE28A9894FD796009AD8 /* QuartzCore.framework */,
+				78CFBC3FA132508A62492C6C /* Security.framework */,
+				9305337EA3BF93B0D9096DCB /* UIKit.framework */,
+				DBEFBE04E8533D1B9524E293 /* WebKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		91024849B4410DE2936FD14D /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				437209303BF69A9712ED9D37 /* mixora-mobile_iOS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		93879B47D06997161EF0A88E /* mixora-mobile */ = {
+			isa = PBXGroup;
+			children = (
+				A4A18287747FC15FAF3EB6DD /* main.mm */,
+				602A13352F9543CDDAA3D123 /* bindings */,
+			);
+			path = "mixora-mobile";
+			sourceTree = "<group>";
+		};
+		98EA2C1ACC1FB279C5D0C168 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				93879B47D06997161EF0A88E /* mixora-mobile */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		A46D9F45F82BF04F69A8CB35 = {
+			isa = PBXGroup;
+			children = (
+				DE7A2E6B517DC58AFD50EE26 /* assets */,
+				CD1BA81C42EAF293C6DB67FA /* Assets.xcassets */,
+				5D97500BE12ED463BE63C97A /* LaunchScreen.storyboard */,
+				141947B16497CD50A729F958 /* Externals */,
+				4A57855004770F20157506E0 /* mixora-mobile_iOS */,
+				98EA2C1ACC1FB279C5D0C168 /* Sources */,
+				D99055C8733E68C758997160 /* src */,
+				60481C70B2B92E546F730034 /* Frameworks */,
+				91024849B4410DE2936FD14D /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		D99055C8733E68C758997160 /* src */ = {
+			isa = PBXGroup;
+			children = (
+				E1585A66F44948EFD322E3C5 /* backend_tests.rs */,
+				B5522F585AF07B0AA781DAF4 /* backend.rs */,
+				3B3B7FD0AC50700B0110E53B /* lib.rs */,
+				65F3CCAE197D7416755A96D7 /* main.rs */,
+			);
+			name = src;
+			path = ../../src;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		55BB63CD4B18657C02D46DEB /* mixora-mobile_iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1B02796CAD2C365681A415B9 /* Build configuration list for PBXNativeTarget "mixora-mobile_iOS" */;
+			buildPhases = (
+				AAE2468E79FD6BE07522FC02 /* Build Rust Code */,
+				FCD499186A9C490189AC5DC8 /* Sources */,
+				752F451BA322023A9CB458D4 /* Resources */,
+				5D6B94DDEDE2AA8706CE26BD /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "mixora-mobile_iOS";
+			packageProductDependencies = (
+			);
+			productName = "mixora-mobile_iOS";
+			productReference = 437209303BF69A9712ED9D37 /* mixora-mobile_iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		2BF160A390F00F6B05D6E1BC /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = E2774DFC8B1E014B09437ACC /* Build configuration list for PBXProject "mixora-mobile" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = A46D9F45F82BF04F69A8CB35;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 91024849B4410DE2936FD14D /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				55BB63CD4B18657C02D46DEB /* mixora-mobile_iOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		752F451BA322023A9CB458D4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				30367AFAC70FD440FCD3967E /* Assets.xcassets in Resources */,
+				B18001CDB5685432660B57C0 /* LaunchScreen.storyboard in Resources */,
+				5F5D73750CEB27492C908B17 /* assets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		AAE2468E79FD6BE07522FC02 /* Build Rust Code */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust Code";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a",
+				"$(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "npm run -- tauri ios xcode-script -v --platform \"${PLATFORM_DISPLAY_NAME:?}\" --sdk-root \"${SDKROOT:?}\" --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration \"${CONFIGURATION:?}\" ${FORCE_COLOR} ${ARCHS:?}\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		FCD499186A9C490189AC5DC8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6FC2726457B5C5061D77852D /* main.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		56BAD8351C20B897FD90AA90 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "mixora-mobile_iOS/mixora-mobile_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "mixora-mobile_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.mixora.mobile;
+				PRODUCT_NAME = "Mixora Mobile";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+			};
+			name = release;
+		};
+		86B54B30B02BF23614E3D145 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = debug;
+		};
+		C19061BC119A76E253CBA6E3 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = release;
+		};
+		FE6A3CE3CEB4D0F92149D80B /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "mixora-mobile_iOS/mixora-mobile_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "mixora-mobile_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.mixora.mobile;
+				PRODUCT_NAME = "Mixora Mobile";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+			};
+			name = debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1B02796CAD2C365681A415B9 /* Build configuration list for PBXNativeTarget "mixora-mobile_iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FE6A3CE3CEB4D0F92149D80B /* debug */,
+				56BAD8351C20B897FD90AA90 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		E2774DFC8B1E014B09437ACC /* Build configuration list for PBXProject "mixora-mobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				86B54B30B02BF23614E3D145 /* debug */,
+				C19061BC119A76E253CBA6E3 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 2BF160A390F00F6B05D6E1BC /* Project object */;
+}
