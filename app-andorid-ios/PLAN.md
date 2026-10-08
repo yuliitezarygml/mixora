@@ -15,19 +15,23 @@
 
 ## Этапы и критерии приёмки
 
-### M1. Рабочая оболочка и подключение к API (текущий этап)
+### M1. Рабочая оболочка и подключение к API (завершённый срез)
 
-- [ ] Общий React UI без второй копии страниц и ресурсов; hash-routing в сборке.
-- [ ] Отдельные команды web / Tauri / Android / iOS и lock-файлы.
-- [ ] Все server URL в одном `api.json`, локальный `.env` только для dev settings,
+- [x] Общий React UI без второй копии страниц и ресурсов; hash-routing в сборке.
+- [x] Отдельные команды web / Tauri / Android / iOS и lock-файлы.
+- [x] Все server URL в одном `api.json`, локальный `.env` только для dev settings,
       пример и безопасная проверка адреса API.
-- [ ] Rust transport: session cookie, JSON, logout, таймауты, ограничения URL,
+- [x] Rust transport: session cookie, JSON, logout, таймауты, ограничения URL,
       отсутствие произвольных headers/credentials/redirect и утечки ошибок.
-- [ ] Нативная сессия пока только в памяти; это явно указано пользователю.
-- [ ] Native HTTP-сессия не подменяется browser-cookie. Неподключённые
+- [x] Нативная сессия пока только в памяти; это явно указано пользователю.
+- [x] Native HTTP-сессия не подменяется browser-cookie. Неподключённые
       authenticated media и WebSocket явно отмечены, а не считаются рабочими.
-- [ ] Regression tests общего клиента, transport tests, web build, Rust checks.
-- [ ] Генерация Android/iOS проектов и проверка доступного toolchain.
+- [x] Regression tests общего клиента, transport tests, web build, Rust checks.
+- [x] Генерация Android/iOS проектов и проверка доступного toolchain.
+- [x] ARM64 Android debug APK и unsigned iOS simulator archive собраны.
+
+Результаты и ограничения: `QA.md`. M1 подтверждает оболочку и transport,
+не полный вход/воспроизведение на настоящем телефоне и не фоновый звук.
 
 ### M2. Главный риск — музыка при заблокированном экране
 

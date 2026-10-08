@@ -1,6 +1,6 @@
 # Mixora — генеральный план разработки и миграции
 
-Статус документа: рабочий план, версия 9 от 2026-10-08.
+Статус документа: рабочий план, версия 10 от 2026-10-08.
 
 Этот файл — главная точка входа в проект. Он описывает фактическое состояние
 локальных исходников, целевую архитектуру, порядок миграции интерфейса, контракт
@@ -10,7 +10,7 @@
 
 ## 1. Цель продукта
 
-Mixora — настольный и веб-клиент музыкального сервиса с единым аккаунтом,
+Mixora — настольный, веб- и мобильный клиент музыкального сервиса с единым аккаунтом,
 каталогом из нескольких легальных источников, библиотекой, синхронизацией
 воспроизведения и персональной бесконечной подборкой «Моя волна».
 
@@ -23,6 +23,10 @@ Mixora — настольный и веб-клиент музыкального 
 ## 2. Источник истины и границы каталогов
 
 - `mixora-client/` — основной React/Vite/Electron-клиент Mixora.
+- `app-andorid-ios/` — Tauri 2 / Rust оболочка Android и iOS. Общий React UI и
+  assets используются из `mixora-client`, без второй копии экранов. Все адреса
+  backend находятся в `app-andorid-ios/api.json`, единый JS API — `src/api.js`.
+  Статус мобильных этапов — `app-andorid-ios/PLAN.md`; проверки — `QA.md`.
 - `beckend/` — существующий готовый музыкальный backend/engine и место для
   нового прикладного слоя Mixora. Музыкальную выдачу не переписываем. Имя
   каталога временно сохраняется, чтобы не ломать существующие команды; после
@@ -720,6 +724,22 @@ dislike исключает трек, early skip влияет мягко.
 
 ## 17. Ближайший рабочий порядок
 
+Новый мобильный приоритет подтверждён пользователем 2026-10-08: Tauri 2 + React,
+без переписывания готового backend и без удаления Electron. M1 выполнен:
+shared UI, hash routing, единый `api.json`, Rust cookie-aware JSON transport,
+native build commands, Android ARM64 debug APK и unsigned iOS simulator archive.
+129 общих клиентских тестов, 10 mobile JS, 7 Rust + отдельный read-only live
+auth-contract smoke проходят; clippy / format / build проверены. Native
+сессия пока только в памяти. Browser-cookie не считается native-сессией;
+authenticated media и native WebSocket пока явно не подключены.
+
+Следующий мобильный этап M2 — вынести PlayerEngine, подключить Android Media3 /
+MediaSessionService и iOS AVPlayer / AVAudioSession, безопасно передавать
+авторизацию для media proxy, проверить lock-screen / interruptions / Bluetooth
+и все пять источников. Затем M3: Keychain / Keystore session, native sync,
+реальный register → login → music → like → playlist → reopen. Подпись iOS и
+настоящий HTTPS backend для телефона требуют пользовательских реквизитов.
+
 Базовые P0–P3, text-часть P5, текущее состояние likes/dislikes, история и
 аккаунтные плейлисты уже реализованы.
 Следующая последовательность:
@@ -946,6 +966,16 @@ embedding/httpapi tests и browser play/save/reload. Это функционал
   packaging прошли; приложение открыто, пауза и позиция 176.2 s восстановлены.
   QA охватывает этот дизайн-срез, а не полную готовность сервиса; качество
   metadata исполнителей и пяти-source packaged journey остаются отдельно.
+
+- 2026-10-08: начат Android/iOS клиент `app-andorid-ios` на Tauri 2 + React.
+  Shared UI не скопирован; Rust получает server origin из единого `api.json`.
+  Cookie-aware JSON bridge ограничивает path/method/body/response и redirects;
+  cookie не выдаётся renderer. Android ARM64 debug APK, iOS simulator archive
+  и Mac QA-shell собраны. 129 общих JS, 10 mobile JS и 7 Rust tests плюс
+  read-only live auth smoke проходят; clippy/format/build проверены. M1 закрыт
+  как foundation, M2–M4 не закрыты: native background audio/authenticated media,
+  secure persisted session, native WS, физические устройства и release signing.
+  Детали и ограничения — `app-andorid-ios/QA.md`, следующий порядок — `PLAN.md`.
 
 ## 19. Definition of Done всего проекта
 

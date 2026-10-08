@@ -1,4 +1,4 @@
-.PHONY: dev infra recommendations embeddings down logs test test-client test-backend
+.PHONY: dev infra recommendations embeddings down logs test test-client test-backend mobile-dev mobile-test mobile-apk mobile-ios-simulator
 
 dev:
 	docker compose up --build
@@ -25,3 +25,16 @@ test-backend:
 
 test-client:
 	cd mixora-client && npm test
+
+mobile-dev:
+	cd app-andorid-ios && npm run native:dev
+
+mobile-test:
+	cd app-andorid-ios && npm test
+	cd app-andorid-ios/src-tauri && cargo test --locked --lib
+
+mobile-apk:
+	cd app-andorid-ios && npm run android:apk
+
+mobile-ios-simulator:
+	cd app-andorid-ios && npm run ios:simulator

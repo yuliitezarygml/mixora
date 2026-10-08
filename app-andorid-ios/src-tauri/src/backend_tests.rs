@@ -1,6 +1,24 @@
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+async fn request_headers(stream: &mut tokio::net::TcpStream) -> String {
+    let mut bytes = Vec::new();
+    loop {
+        let mut chunk = [0; 1024];
+        let length = stream.read(&mut chunk).await.unwrap();
+        assert!(
+            length > 0,
+            "fixture connection closed before request headers"
+        );
+        bytes.extend_from_slice(&chunk[..length]);
+        assert!(bytes.len() <= 16 * 1024, "fixture headers exceed limit");
+        if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+    String::from_utf8(bytes).unwrap()
+}
+
 #[test]
 fn release_requires_a_plain_https_origin_without_credentials_or_paths() {
     assert!(backend_origin("https://api.example.test", false).is_ok());
@@ -106,9 +124,7 @@ async fn cookie_stays_in_rust_and_local_session_reset_does_not_need_server_logou
     let server = tokio::spawn(async move {
         for index in 0..3 {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let mut bytes = vec![0; 8192];
-            let length = stream.read(&mut bytes).await.unwrap();
-            let request = String::from_utf8_lossy(&bytes[..length]).to_lowercase();
+            let request = request_headers(&mut stream).await.to_lowercase();
             if index == 1 {
                 assert!(request.contains("cookie: mixora_session=fixture"));
             }
@@ -146,8 +162,7 @@ async fn fixture_backend_response(response: String) -> (Backend, tokio::task::Jo
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let mut request = vec![0; 8192];
-        stream.read(&mut request).await.unwrap();
+        request_headers(&mut stream).await;
         let _ = stream.write_all(response.as_bytes()).await;
     });
     (Backend::new(&origin, true).unwrap(), server)
@@ -194,10 +209,23 @@ async fn oversized_response_is_rejected_before_reading_the_body() {
 #[tokio::test]
 async fn offline_logout_replaces_the_private_cookie_jar() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
-    drop(listener); // no server accepts the logout
+    let address = listener.local_addr().unwrap();
+    let origin = format!("http://{address}");
     let backend = Backend::new(&origin, true).unwrap();
-    let previous = backend.client.read().await.clone();
+    let login_server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        request_headers(&mut stream).await;
+        stream.write_all(b"HTTP/1.1 200 OK\r\nSet-Cookie: mixora_session=fixture; Path=/api/v1; HttpOnly\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
+    });
+    backend
+        .request(ApiRequest {
+            path: "/api/v1/auth/session".into(),
+            method: "GET".into(),
+            body: None,
+        })
+        .await
+        .unwrap();
+    login_server.await.unwrap(); // listener is now gone; logout cannot connect
     let error = backend
         .request(ApiRequest {
             path: "/api/v1/auth/logout".into(),
@@ -208,12 +236,28 @@ async fn offline_logout_replaces_the_private_cookie_jar() {
         .err()
         .unwrap();
     assert_eq!(error, "Не удалось связаться с сервером");
-    // Client Debug contains an Arc identity; compare before/after to prove the
-    // session was replaced, without ever reading or displaying cookie values.
-    assert_ne!(
-        format!("{previous:?}"),
-        format!("{:?}", backend.client.read().await)
-    );
+    let restarted = tokio::net::TcpListener::bind(address).await.unwrap();
+    let me_server = tokio::spawn(async move {
+        let (mut stream, _) = restarted.accept().await.unwrap();
+        let request = request_headers(&mut stream).await;
+        assert!(!request.contains("mixora_session=fixture"));
+        stream
+            .write_all(
+                b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+            )
+            .await
+            .unwrap();
+    });
+    let response = backend
+        .request(ApiRequest {
+            path: "/api/v1/me".into(),
+            method: "GET".into(),
+            body: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(response.status, 401);
+    me_server.await.unwrap();
 }
 
 #[tokio::test]
