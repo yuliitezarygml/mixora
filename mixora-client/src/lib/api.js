@@ -1,3 +1,5 @@
+import { clientRequest, prepareClientPlayback } from "./clientRuntime.js";
+
 export class ApiError extends Error {
   constructor(message, status, details = null) {
     super(message);
@@ -47,7 +49,7 @@ export function unwrapApiResponse(value, status = 200) {
 export async function api(path, { signal, ...options } = {}) {
   let response;
   try {
-    response = await fetch(`/api/v1${path}`, {
+    response = await clientRequest(`/api/v1${path}`, {
       credentials: "include",
       signal,
       ...options,
@@ -679,7 +681,7 @@ export async function getTrackPlayback(trackOrID, signal) {
       `/tracks/${encodeURIComponent(reference.id)}/stream`,
       { signal },
     );
-    return normalizeTrackPlayback(data);
+    return prepareClientPlayback(normalizeTrackPlayback(data), signal);
   }
   if (reference.source === "spotify") {
     const data = await api(
@@ -694,7 +696,7 @@ export async function getTrackPlayback(trackOrID, signal) {
         422,
       );
     }
-    return normalizeTrackPlayback(data);
+    return prepareClientPlayback(normalizeTrackPlayback(data), signal);
   }
   const permalink = firstText(track?.permalink, track?.webpage_url);
   if (!permalink) {
@@ -706,10 +708,10 @@ export async function getTrackPlayback(trackOrID, signal) {
   // Keep short-lived provider CDN URLs on the server. The browser receives a
   // stable same-origin URL that can be retried with Range requests while the
   // backend resolves a fresh upstream stream for each media request.
-  return {
+  return prepareClientPlayback({
     url: `/api/v1/media/stream?url=${encodeURIComponent(permalink)}`,
     format: "progressive",
-  };
+  }, signal);
 }
 export function localTrack(t) {
   return {

@@ -2,8 +2,8 @@ import { useEffect, useRef } from "react";
 import {
   decodePlaybackState,
   playbackSnapshot,
-  playbackSocketURL,
 } from "../lib/playbackSync.js";
+import { createPlaybackSocket } from "../lib/clientRuntime.js";
 
 const RECONNECT_DELAY_MS = 2000;
 const REMOTE_RELEASE_DELAY_MS = 500;
@@ -78,11 +78,14 @@ export function usePlaybackSync({
       if (stopped) return;
       let socket;
       try {
-        socket = new WebSocket(playbackSocketURL(window.location));
+        socket = createPlaybackSocket(window.location);
       } catch {
         scheduleReconnect();
         return;
       }
+      // A native cookie jar is not the WebView's cookie jar. Native runtimes
+      // can opt out until a cookie-aware socket engine is installed.
+      if (!socket) return;
       latestSocket = socket;
       socketRef.current = socket;
       socket.onmessage = (event) => {
