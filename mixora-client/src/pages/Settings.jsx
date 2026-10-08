@@ -24,6 +24,23 @@ export default function Settings() {
         </div>
       </section>
       <section className="settings-section Settings_root__FVVrn">
+        <h2>Музыкальные интересы</h2>
+        <div className="setting-row">
+          <div>
+            <strong>Музыкальные интересы</strong>
+            <p>Артисты и жанры для Моей волны</p>
+          </div>
+          <button
+            className="secondary"
+            onClick={() =>
+              a.user ? a.setTasteOpen(true) : a.setAuthOpen(true)
+            }
+          >
+            Уточнить предпочтения
+          </button>
+        </div>
+      </section>
+      <section className="settings-section Settings_root__FVVrn">
         <h2>Внешний вид</h2>
         <div className="setting-row">
           <label htmlFor="theme">Тема приложения</label>
@@ -91,7 +108,8 @@ export default function Settings() {
         <p>Музыка и ваши плейлисты в одном месте.</p>
         <p className="muted">
           Сохранённая коллекция синхронизируется с вашим аккаунтом Mixora.
-          Воспроизведение — Mixora и SoundCloud.
+          Источники: SoundCloud, YouTube, VK, Bandcamp и доступные Spotify
+          preview.
         </p>
       </section>
       {clear && (

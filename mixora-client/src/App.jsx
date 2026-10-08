@@ -7,6 +7,7 @@ import { IconButton, Empty } from "./components/Primitives.jsx";
 import Player, { PlayerPanel } from "./components/Player.jsx";
 import WaveSettings from "./components/WaveSettings.jsx";
 import AuthModal from "./components/AuthModal.jsx";
+import TasteOnboarding from "./components/TasteOnboarding.jsx";
 import Home from "./pages/Home.jsx";
 import Search from "./pages/Search.jsx";
 import Collection, { CreatePlaylist } from "./pages/Collection.jsx";
@@ -145,6 +146,9 @@ export default function App() {
       <Player />
       <PlayerPanel />
       {a.authOpen && <AuthModal />}
+      {a.user && a.tasteOpen && !a.authOpen && (
+        <TasteOnboarding key={a.user.id} />
+      )}
       {a.waveSettingsOpen && <WaveSettings />}
       {create && <CreatePlaylist onClose={() => setCreate(false)} />}
       <nav className="mobile-nav" aria-label="Мобильное меню">

@@ -28,16 +28,18 @@ type Context struct {
 }
 
 type Request struct {
-	UserID      string        `json:"-"`
-	Preferences Preferences   `json:"preferences"`
-	Context     Context       `json:"context"`
-	Round       int           `json:"round"`
-	Explicit    bool          `json:"explicit"`
-	Exclude     []music.Track `json:"exclude"`
-	Likes       []music.Track `json:"likes"`
-	History     []music.Track `json:"history"`
-	Dislikes    []music.Track `json:"dislikes"`
-	Seeds       []music.Track `json:"seeds"`
+	TasteArtists []string      `json:"-"`
+	TasteGenres  []string      `json:"-"`
+	UserID       string        `json:"-"`
+	Preferences  Preferences   `json:"preferences"`
+	Context      Context       `json:"context"`
+	Round        int           `json:"round"`
+	Explicit     bool          `json:"explicit"`
+	Exclude      []music.Track `json:"exclude"`
+	Likes        []music.Track `json:"likes"`
+	History      []music.Track `json:"history"`
+	Dislikes     []music.Track `json:"dislikes"`
+	Seeds        []music.Track `json:"seeds"`
 }
 
 type Result struct {
@@ -53,6 +55,7 @@ type Service struct {
 	content       ContentBased
 	preferences   PreferenceSource
 	history       HistorySource
+	taste         TasteSource
 }
 
 // CandidateSource is the live-search provider. Recent provider-neutral catalog
@@ -89,6 +92,14 @@ type HistorySource interface {
 }
 
 type Option func(*Service)
+
+type TasteSource interface {
+	RecommendationTaste(context.Context, string) ([]string, []string, error)
+}
+
+func WithTasteSource(value TasteSource) Option {
+	return func(service *Service) { service.taste = value }
+}
 
 func WithCollaborative(value Collaborative) Option {
 	return func(service *Service) { service.collaborative = value }
@@ -129,7 +140,21 @@ func (s *Service) Recommend(ctx context.Context, request Request) (Result, error
 	request = canonicalRequest(request)
 	request = s.withStoredPreferences(ctx, request)
 	request = s.withStoredHistory(ctx, request)
-	query := BuildQuery(request.Preferences, request.Context, request.Likes, request.Round)
+	if s.taste != nil && request.UserID != "" {
+		request.TasteArtists, request.TasteGenres, _ = s.taste.RecommendationTaste(ctx, request.UserID)
+	}
+	context := request.Context
+	// Real reactions supersede the initial artist anchor, while the profile
+	// remains a soft ranking signal. Explicit station context always wins.
+	if context.Artist == "" && context.Genre == "" && len(request.Likes) == 0 && len(request.History) == 0 {
+		if len(request.TasteArtists) > 0 {
+			context.Artist = request.TasteArtists[positiveMod(request.Round, len(request.TasteArtists))]
+		}
+		if len(request.TasteGenres) > 0 {
+			context.Genre = request.TasteGenres[positiveMod(request.Round, len(request.TasteGenres))]
+		}
+	}
+	query := BuildQuery(request.Preferences, context, request.Likes, request.Round)
 	collaborativeIDs := s.personalizedIDs(ctx, request.UserID)
 	contentIDs := s.contentIDs(ctx, request.UserID, tasteSeedKeys(request), query)
 	personalizedIDs := BlendRankings(collaborativeIDs, contentIDs, 100)
@@ -164,7 +189,26 @@ func (s *Service) Recommend(ctx context.Context, request Request) (Result, error
 	if len(pool) == 0 && len(candidates) == 0 {
 		return Result{}, ErrUnavailable
 	}
-	tracks, _ := Personalize(pool, personalizedIDs, 30)
+	order := personalizedIDs
+	if len(request.Likes)+len(request.History) == 0 && len(request.TasteArtists) > 0 {
+		// Gorse may return popular items for an unknown listener. Reserve the
+		// first few positions for available chosen artists, rather than letting
+		// that fallback erase the explicit cold-start profile.
+		initial := make([]string, 0, 6)
+		for _, track := range pool {
+			for _, artist := range request.TasteArtists {
+				if strings.EqualFold(strings.TrimSpace(track.Artist), artist) {
+					initial = append(initial, track.Key())
+					break
+				}
+			}
+			if len(initial) >= 6 {
+				break
+			}
+		}
+		order = append(initial, personalizedIDs...)
+	}
+	tracks, _ := Personalize(pool, order, 30)
 	tracks = diversifyCatalogFallback(tracks, pool, catalogCandidates, 30)
 	model := modelVersion(
 		countMatches(pool, collaborativeIDs) > 0,
@@ -539,10 +583,11 @@ func diversifyCatalogFallback(result, ranked, catalog []music.Track, limit int) 
 }
 
 func BuildQuery(preferences Preferences, context Context, likes []music.Track, round int) string {
-	if context.Artist != "" && preferences.Activity == "any" && preferences.Mood == "any" {
+	unconstrained := (preferences.Activity == "" || preferences.Activity == "any") && (preferences.Mood == "" || preferences.Mood == "any")
+	if context.Artist != "" && unconstrained {
 		return context.Artist
 	}
-	if context.Genre != "" && preferences.Activity == "any" && preferences.Mood == "any" {
+	if context.Genre != "" && unconstrained {
 		return context.Genre
 	}
 	activity := map[string]string{
@@ -611,6 +656,23 @@ func Rank(candidates []music.Track, request Request, limit int) []music.Track {
 		score := -float64(index) / 100
 		if favoriteArtists[track.ArtistID+"|"+track.Artist] {
 			score += .4
+		}
+		for _, artist := range request.TasteArtists {
+			if strings.EqualFold(strings.TrimSpace(track.Artist), artist) {
+				if len(request.Likes)+len(request.History) == 0 {
+					score += .8
+				} else {
+					// Actual listening gradually supersedes the onboarding choices.
+					score += .2
+				}
+				break
+			}
+		}
+		for _, genre := range request.TasteGenres {
+			if strings.Contains(strings.ToLower(track.Genre), genre) {
+				score += .3
+				break
+			}
 		}
 		if request.Preferences.Diversity == "popular" {
 			score += math.Log10(float64(track.PlaybackCount) + 1)

@@ -107,6 +107,7 @@ func main() {
 		recommendation.WithCatalog(catalogStore),
 		recommendation.WithPreferenceSource(libraryStore),
 		recommendation.WithHistorySource(libraryStore),
+		recommendation.WithTasteSource(libraryStore),
 	}
 	if cfg.GorseURL != "" {
 		gorseClient, err := gorseapi.New(gorseapi.Config{

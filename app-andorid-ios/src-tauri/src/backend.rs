@@ -1,5 +1,6 @@
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, sync::Mutex, time::Instant};
 use std::{net::IpAddr, sync::Arc, time::Duration};
 use tokio::sync::{RwLock, Semaphore};
 
@@ -98,9 +99,10 @@ impl ApiRequest {
 }
 
 pub struct Backend {
-    origin: Url,
-    client: RwLock<reqwest::Client>,
-    permits: Semaphore,
+    pub(crate) origin: Url,
+    pub(crate) client: RwLock<reqwest::Client>,
+    pub(crate) permits: Semaphore,
+    pub(crate) media: Mutex<HashMap<String, (Url, Instant)>>,
 }
 
 fn session_client() -> Result<reqwest::Client, String> {
@@ -120,6 +122,7 @@ impl Backend {
             origin: backend_origin(value, debug)?,
             client: RwLock::new(session_client()?),
             permits: Semaphore::new(8),
+            media: Mutex::new(HashMap::new()),
         })
     }
     pub async fn request(&self, request: ApiRequest) -> Result<ApiResponse, String> {
@@ -186,6 +189,10 @@ impl Backend {
         Ok(ApiResponse { status, body })
     }
     pub async fn clear_session(&self) -> Result<(), String> {
+        self.media
+            .lock()
+            .map_err(|_| "Media state unavailable")?
+            .clear();
         *self.client.write().await = session_client()?;
         Ok(())
     }

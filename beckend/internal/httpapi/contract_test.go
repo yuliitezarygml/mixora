@@ -774,6 +774,7 @@ func (f *fakeAuthBackend) ResetPassword(context.Context, string, string) (auth.U
 }
 
 type fakeLibraryBackend struct {
+	tastes             map[string]library.TasteProfile
 	snapshot           library.Snapshot
 	userID             string
 	payload            json.RawMessage
@@ -805,6 +806,23 @@ type fakePlaylistReceipt struct {
 
 func (f *fakeLibraryBackend) Get(context.Context, string) (library.Snapshot, error) {
 	return f.snapshot, nil
+}
+
+func (f *fakeLibraryBackend) GetTaste(_ context.Context, userID string) (library.TasteProfile, error) {
+	if profile, ok := f.tastes[userID]; ok {
+		return profile, nil
+	}
+	return library.TasteProfile{Artists: []string{}, Genres: []string{}}, nil
+}
+func (f *fakeLibraryBackend) PutTaste(_ context.Context, userID string, input library.TasteInput) (library.TasteProfile, error) {
+	profile, err := library.NormalizeTaste(input)
+	if err == nil {
+		if f.tastes == nil {
+			f.tastes = map[string]library.TasteProfile{}
+		}
+		f.tastes[userID] = profile
+	}
+	return profile, err
 }
 
 func (f *fakeLibraryBackend) Put(_ context.Context, userID string, payload json.RawMessage) (library.Snapshot, error) {

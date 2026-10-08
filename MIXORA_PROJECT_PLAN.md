@@ -214,6 +214,8 @@ beckend/
 
 ### Пользовательские данные
 
+- `user_taste_profiles`: explicit cold-start интересы аккаунта (5–30 артистов,
+  до 12 жанров, completed), отдельно от likes/events; миграция `014`.
 - `user_track_preferences`: реализованное текущее состояние
   `liked`/`disliked`/`neutral` для канонической пары `source/id`, с revision и
   компактным metadata snapshot.
@@ -284,6 +286,8 @@ likes/dislikes, историю и собственные плейлисты. П�
 - `POST /api/v1/auth/password/reset`
 - `GET  /api/v1/me`
 - `PATCH /api/v1/me`
+- `GET /api/v1/me/taste`
+- `PUT /api/v1/me/taste` — выбор артистов/жанров или явный skip для cold-start.
 - `GET  /api/v1/me/devices`
 - `DELETE /api/v1/me/devices/{id}`
 
@@ -696,7 +700,9 @@ dislike исключает трек, early skip влияет мягко.
   до их Gorse-проекции: неизвестное событие остаётся в PostgreSQL, но не может
   создать Gorse item; Wave feedback дополнительно связан с server-side impression.
 - [ ] Добавить и оценить CLAP/audio embeddings.
-- [ ] Cold-start onboarding в UI и управляемая exploration.
+- [x] Cold-start onboarding: пять артистов/жанры, server-owned profile,
+  стартовая Wave/подборки и редактирование интересов в настройках.
+- [ ] Управляемая exploration и оценка качества стартовых рекомендаций.
 - [ ] Offline evaluation и A/B-ready assignment.
 
 ### P6 — desktop/production
@@ -728,10 +734,9 @@ dislike исключает трек, early skip влияет мягко.
 без переписывания готового backend и без удаления Electron. M1 выполнен:
 shared UI, hash routing, единый `api.json`, Rust cookie-aware JSON transport,
 native build commands, Android ARM64 debug APK и unsigned iOS simulator archive.
-129 общих клиентских тестов, 10 mobile JS, 7 Rust + отдельный read-only live
-auth-contract smoke проходят; clippy / format / build проверены. Native
-сессия пока только в памяти. Browser-cookie не считается native-сессией;
-authenticated media и native WebSocket пока явно не подключены.
+Актуальные проверки — `app-andorid-ios/QA.md`. Native сессия пока только в
+памяти. Browser-cookie не считается native-сессией; authenticated media
+подключено foreground Rust-мостом, native WebSocket пока не подключён.
 
 Следующий мобильный этап M2 — вынести PlayerEngine, подключить Android Media3 /
 MediaSessionService и iOS AVPlayer / AVAudioSession, безопасно передавать
@@ -772,7 +777,7 @@ embedding/httpapi tests и browser play/save/reload. Это функционал
    library уже выделены; следующие узкие модули — auth/catalog/Wave.
 3. Добавить метрики recommendation quality/latency, offline evaluation и
    объяснение причины для отдельного трека.
-4. Реализовать управляемую exploration и cold-start onboarding в UI.
+4. Реализовать управляемую exploration и оценить уже добавленный UI onboarding.
 5. Исследовать CLAP/audio embeddings только после сравнения с уже работающими
    text embeddings на накопленных событиях.
 6. Закрыть desktop deep links/IPC и production TLS/SMTP/secrets/backups,
@@ -982,6 +987,22 @@ embedding/httpapi tests и browser play/save/reload. Это функционал
   regression test. Убрана промежуточная заставка: macOS WebView сразу открывает
   основной интерфейс. 11/11 mobile и 129/129 shared client tests проходят,
   Vite build проверен; native audio/session/signing остаются этапами M2–M4.
+
+- 2026-10-08: native authenticated media заглушка заменена private-session
+  foreground Rust-мостом. Loopback только на 127.0.0.1 со случайным портом,
+  opaque grants, строгий Host/GET/HEAD, TTL, logout и bounded memory. Backend
+  отдаёт по 1 МБ: мост последовательно выполняет весь Range, а не выдаёт
+  первую порцию за целый файл. Поддержаны suffix ranges и один retry 502/504.
+  В macOS Tauri проверен YouTube Official Audio: 3:54, воспроизведение после
+  первой минуты, seek 2:57 → 3:03, pause. Это не background audio/device QA.
+- 2026-10-08: добавлен первый вход с выбором минимум пяти артистов и жанров,
+  authenticated `/me/taste`, migration 014 и повторное редактирование в
+  настройках. Интересы направляют cold-start Wave/подборки; сохранённые лайки,
+  история, Gorse и embeddings продолжают работать. Профиль не создаёт fake
+  likes. Late GET/PUT защищены от смены аккаунта и отмены нового сохранения.
+  Native UI/save/relogin и live cold-start Wave проверены на QA-аккаунтах.
+  Публичное поведение Яндекс Музыки проанализировано по официальной справке,
+  но закрытая модель не воспроизведена: `MUSIC_PERSONALIZATION.md`.
 
 ## 19. Definition of Done всего проекта
 

@@ -25,6 +25,9 @@ const { Cover } = await server.ssrLoadModule("/src/components/Primitives.jsx");
 const { default: CollectionOverview } = await server.ssrLoadModule(
   "/src/pages/CollectionOverview.jsx",
 );
+const { default: TasteOnboarding } = await server.ssrLoadModule(
+  "/src/components/TasteOnboarding.jsx",
+);
 
 test("collection uses the reference heading, actual like count and artists before recommendations", () => {
   const markup = renderToStaticMarkup(
@@ -146,6 +149,8 @@ async function mount(
     loginUser = user,
     renderPanel = false,
     renderCover = false,
+    renderTaste = false,
+    tasteProfile = { artists: [], genres: [], completed: true },
   } = {},
 ) {
   const dom = new JSDOM('<div id="root"></div>', {
@@ -221,6 +226,15 @@ async function mount(
     let value = {};
     if (path === "/api/v1/me" || path === "/api/v1/auth/session") value = user;
     if (path === "/api/v1/auth/login") value = loginUser;
+    if (path === "/api/v1/me/taste") {
+      value = body
+        ? {
+            artists: body.skip ? [] : body.artists,
+            genres: body.skip ? [] : body.genres,
+            completed: true,
+          }
+        : tasteProfile;
+    }
     if (path === "/api/v1/me/history") value = { entries: [], generation: 0 };
     if (path === "/api/v1/me/playlists") value = { playlists: [] };
     if (path.startsWith("/api/v1/me/playlists/") && options.method === "PUT") {
@@ -244,6 +258,10 @@ async function mount(
     state = useContext(AppContext);
     return null;
   }
+  function TastePrompt() {
+    const app = useContext(AppContext);
+    return app.tasteOpen ? createElement(TasteOnboarding) : null;
+  }
   const root = createRoot(document.getElementById("root"));
   await act(async () =>
     root.render(
@@ -251,6 +269,7 @@ async function mount(
         AppProvider,
         null,
         createElement(Capture),
+        renderTaste && createElement(TastePrompt),
         renderPanel && createElement(PlayerPanel),
         renderCover &&
           createElement(Cover, {
@@ -518,6 +537,71 @@ test("Wave like and dislike deliver immediate session feedback", async (t) => {
       .map((request) => request.body.type)
       .filter((type) => type === "like" || type === "dislike"),
     ["like", "dislike"],
+  );
+});
+
+test("first login chooses five artists before a pending Wave and saves account taste, not likes", async (t) => {
+  const app = await mount(t, {
+    renderTaste: true,
+    tasteProfile: { artists: [], genres: [], completed: false },
+  });
+  assert.equal(app.state().tasteOpen, true);
+  await act(async () =>
+    document
+      .querySelector(".taste-artists img")
+      .dispatchEvent(new app.dom.window.Event("error", { bubbles: true })),
+  );
+  assert.equal(
+    document.querySelector(".taste-artists use")?.getAttribute("href"),
+    "/assets/icons/sprite.svg#artist_xxs",
+  );
+  const submit = () =>
+    [...document.querySelectorAll("button")].find(
+      (button) => button.textContent === "Настроить Мою волну",
+    );
+  assert.equal(submit().disabled, true);
+  await act(async () => app.state().startWave());
+  assert.equal(
+    app.requests.filter((request) => request.path === "/api/v1/wave").length,
+    0,
+  );
+  const buttons = [...document.querySelectorAll(".taste-artists button")].slice(
+    0,
+    5,
+  );
+  for (const button of buttons)
+    await act(async () =>
+      button.dispatchEvent(
+        new app.dom.window.MouseEvent("click", { bubbles: true }),
+      ),
+    );
+  assert.equal(submit().disabled, false);
+  const genre = [...document.querySelectorAll(".taste-chips button")].find(
+    (button) => button.textContent === "Электроника",
+  );
+  await act(async () =>
+    genre.dispatchEvent(
+      new app.dom.window.MouseEvent("click", { bubbles: true }),
+    ),
+  );
+  await act(async () =>
+    submit().dispatchEvent(
+      new app.dom.window.MouseEvent("click", { bubbles: true }),
+    ),
+  );
+  assert.equal(app.state().taste.completed, true);
+  assert.equal(app.state().tasteOpen, false);
+  assert.equal(app.state().taste.artists.length, 5);
+  assert.deepEqual(app.state().taste.genres, ["electronic"]);
+  assert.deepEqual(app.state().library.likes, []);
+  const wave = app.requests.find((request) => request.path === "/api/v1/wave");
+  assert.equal(wave.body.context.artist, app.state().taste.artists[0]);
+  assert.equal(
+    app.requests.filter(
+      (request) =>
+        request.path === "/api/v1/me/taste" && request.method === "PUT",
+    ).length,
+    1,
   );
 });
 

@@ -1,5 +1,110 @@
 /* Layout and component rules live in the unchanged original stylesheets.
    This file adapts their DOM to React and the Mixora data model. */
+.taste-wall {
+  background: radial-gradient(ellipse at top, #473321, #101010 65%);
+}
+.auth-card.taste-card {
+  width: min(900px, 95vw);
+  max-height: 92dvh;
+  overflow-y: auto;
+  padding: 24px;
+}
+.taste-card h2 {
+  margin: 12px 0;
+}
+.taste-card h3 {
+  margin: 24px 0 8px;
+}
+.taste-search {
+  display: flex;
+  gap: 12px;
+  margin: 20px 0 12px;
+}
+.taste-search input {
+  min-width: 0;
+  flex: 1;
+}
+.taste-search input,
+.taste-search select {
+  padding: 12px;
+  border-radius: 12px;
+  background: #2a2a2a;
+  color: #fff;
+  border: 1px solid #444;
+}
+.taste-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.taste-chips button {
+  padding: 10px 14px;
+  border-radius: 24px;
+  background: #303030;
+  color: #fff;
+}
+.taste-chips button.selected,
+.taste-artists button.selected {
+  outline: 2px solid #ffdc26;
+  background: #51471f;
+}
+.taste-artists {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+.taste-artists button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  background: #252525;
+  color: #fff;
+}
+.taste-artists img {
+  width: 76px;
+  height: 76px;
+  object-fit: cover;
+  border-radius: 50%;
+}
+.taste-count {
+  color: #ffdc26;
+}
+.taste-actions {
+  position: sticky;
+  bottom: -24px;
+  padding: 20px 0;
+  margin-top: 16px;
+  background: #1a1a1a;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.taste-actions .auth-submit {
+  flex: 1;
+}
+@media (max-width: 600px) {
+  .auth-card.taste-card {
+    padding: 16px;
+  }
+  .taste-search {
+    flex-direction: column;
+  }
+  .taste-artists {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .taste-actions {
+    bottom: -16px;
+    flex-direction: column;
+  }
+  .taste-actions .auth-submit {
+    width: 100%;
+  }
+}
 :root {
   --base: var(--ym-background-color-primary-enabled-basic);
   --surface: var(--ym-background-color-primary-enabled-content);

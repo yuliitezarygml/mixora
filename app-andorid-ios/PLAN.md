@@ -10,6 +10,9 @@
 - Эта папка — отдельная точка входа, Vite build и Rust/Tauri-оболочка.
 - Native API transport — узкий Rust-модуль: фиксированный адрес сервера,
   собственная cookie-сессия, ограниченные JSON-запросы. Cookie не выдаётся JS.
+- Foreground media bridge — Rust loopback HTTP с opaque grants; session cookie
+  используется только при запросе существующего backend. Последовательные
+  bounded chunks сохраняют полную длину и семантику Range для WebView.
 - Native audio — отдельный будущий модуль: Android Media3 + MediaSessionService,
   iOS AVPlayer + AVAudioSession. Web Audio не считается фоновым native-плеером.
 
@@ -24,8 +27,8 @@
 - [x] Rust transport: session cookie, JSON, logout, таймауты, ограничения URL,
       отсутствие произвольных headers/credentials/redirect и утечки ошибок.
 - [x] Нативная сессия пока только в памяти; это явно указано пользователю.
-- [x] Native HTTP-сессия не подменяется browser-cookie. Неподключённые
-      authenticated media и WebSocket явно отмечены, а не считаются рабочими.
+- [x] Native HTTP-сессия не подменяется browser-cookie. Authenticated media
+      подключено отдельным мостом; native WebSocket остаётся неподключённым.
 - [x] Regression tests общего клиента, transport tests, web build, Rust checks.
 - [x] Генерация Android/iOS проектов и проверка доступного toolchain.
 - [x] ARM64 Android debug APK и unsigned iOS simulator archive собраны.
@@ -37,10 +40,13 @@
 
 ### M2. Главный риск — музыка при заблокированном экране
 
+- [x] Foreground media proxy использует native session без передачи cookie JS.
+- [x] Полные/open/suffix ranges, bounded memory, TTL/Host/method restrictions,
+      logout invalidation и один bounded retry покрыты автоматическими тестами.
 - [ ] Общий `PlayerEngine` interface; существующий HTMLAudio engine сохранён.
 - [ ] Android Media3, foreground service и notification / lock-screen controls.
 - [ ] iOS AVPlayer, audio-session interruptions / routes и Now Playing controls.
-- [ ] Безопасная передача session в media engine без токена в URL/localStorage.
+- [ ] Подключение private session к будущим Media3/AVPlayer background engines.
 - [ ] Воспроизведение, seek, next / previous, Bluetooth, incoming call,
       background / screen lock на настоящих Android и iPhone.
 - [ ] SoundCloud, YouTube, VK, Bandcamp, доступный Spotify preview; недоступные
@@ -48,6 +54,10 @@
 
 ### M3. Аккаунт и продолжение между устройствами
 
+- [x] Первый вход: выбор пяти артистов и жанров, authenticated GET/PUT taste,
+      PostgreSQL profile, повторное редактирование в настройках.
+- [x] Cold-start Wave/подборки учитывают профиль, не создавая ложных лайков;
+      поздние responses не переносят интересы между аккаунтами.
 - [ ] Keychain / Keystore для сохранения native session, expiry и logout.
 - [ ] Authenticated native WebSocket и sync без двух одновременно играющих устройств.
 - [ ] Регистрация → вход → поиск → playback → like → playlist → reopen.

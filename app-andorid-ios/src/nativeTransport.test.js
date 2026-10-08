@@ -70,7 +70,7 @@ test("pre-aborted requests never cross IPC", async () => {
   assert.equal(calls, 0);
 });
 
-test("native foreground previews remain usable; authenticated proxy is explicitly pending", async () => {
+test("native foreground previews remain usable without a media bridge call", async () => {
   const transport = createNativeTransport(async () => {
     throw new Error("not used");
   });
@@ -79,9 +79,24 @@ test("native foreground previews remain usable; authenticated proxy is explicitl
     format: "progressive",
   };
   assert.equal(await transport.preparePlayback(preview), preview);
-  await assert.rejects(
-    transport.preparePlayback({ url: "/api/v1/media/stream?url=fixture" }),
-    /нативный плеер/i,
-  );
   assert.equal(transport.createPlaybackSocket(), null);
+});
+
+test("all authenticated sources use opaque media grants, not cookie or backend URLs", async () => {
+  for (const provider of ["youtube", "vk", "bandcamp"]) {
+    const calls = [];
+    const transport = createNativeTransport(async (command, args) => {
+      calls.push([command, args]);
+      return "http://127.0.0.1:45678/opaque-grant";
+    });
+    const playback = {
+      url: `/api/v1/media/stream?url=https%3A%2F%2F${provider}.example%2Fsong`,
+      format: "progressive",
+    };
+    assert.deepEqual(await transport.preparePlayback(playback), {
+      ...playback,
+      url: "http://127.0.0.1:45678/opaque-grant",
+    });
+    assert.deepEqual(calls, [["prepare_media", { path: playback.url }]]);
+  }
 });

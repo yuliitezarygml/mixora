@@ -58,6 +58,7 @@ export function recommendationFingerprint(options = {}) {
   const library = options.library || {};
   return JSON.stringify({
     owner: options.userId || "",
+    taste: options.taste || null,
     likes: rows(library.likes).map(key).slice(0, 40),
     dislikes: rows(library.dislikes).map(key).slice(0, 80),
     history: rows(library.history).map(key).slice(0, 40),

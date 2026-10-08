@@ -39,12 +39,8 @@ export function createNativeTransport(invoke) {
     },
     async preparePlayback(playback) {
       if (playback.url.startsWith("/api/")) {
-        const error = new Error(
-          "Для этого источника ещё подключается нативный плеер. Откройте трек в текущем ПК-клиенте.",
-        );
-        error.name = "ApiError";
-        error.status = 501;
-        throw error;
+        const url = await invoke("prepare_media", { path: playback.url });
+        return { ...playback, url };
       }
       return playback;
     },

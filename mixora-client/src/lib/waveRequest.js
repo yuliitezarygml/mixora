@@ -1,4 +1,5 @@
 import { uniqueTracks } from "./library.js";
+import { tasteContext } from "./tasteProfile.js";
 
 const tracks = (value) => (Array.isArray(value) ? value : []);
 
@@ -10,6 +11,7 @@ export function buildWaveRequest({
   round = 0,
   explicit = true,
   exclude = [],
+  taste,
 } = {}) {
   const likes = tracks(library.likes);
   const history = tracks(library.history);
@@ -21,7 +23,12 @@ export function buildWaveRequest({
 
   return {
     preferences,
-    context: context || {},
+    context:
+      context && (context.artist || context.genre || context.title)
+        ? context
+        : likes.length || history.length
+          ? {}
+          : tasteContext(taste, round),
     round,
     explicit,
     exclude: tracks(exclude),

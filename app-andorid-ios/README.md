@@ -81,14 +81,25 @@ Android release также требует собственных ключей и
   после закрытия приложения нужно снова войти.
 - Browser dev использует прежний same-origin API/WS/audio. В native оболочке
   прямые provider preview / foreground streams используют текущий web engine.
-- Authenticated media proxy YouTube / VK / Bandcamp в native пока явно
-  возвращает сообщение «подключается нативный плеер», не ложное «играет».
-  Native WebSocket намеренно не открывается с чужой WebView cookie jar.
+- Для серверного media proxy YouTube / VK / Bandcamp подключён foreground
+  Rust-мост: private cookie остаётся в Rust, WebView получает ограниченный
+  opaque grant на локальном `127.0.0.1` origin со случайным портом. Это не
+  общий HTTP proxy: только выданные пути, GET/HEAD, строгий Host, TTL и лимиты.
+  Порции backend по 1 МБ собираются в полный запрошенный Range без загрузки
+  всей песни в память; временная ошибка 502/504 повторяется максимум один раз.
+  Logout отменяет grants. Удалена заглушка «откройте в ПК-клиенте».
+- При первом входе появляется выбор минимум пяти артистов и необязательных
+  жанров. Интересы хранятся в PostgreSQL отдельно от лайков и дают начальное
+  направление волне/подборкам. Изменить их можно в настройках. Можно пропустить.
+- Native WebSocket намеренно не открывается с чужой WebView cookie jar.
 - Фоновый звук и управление с lock screen **ещё не реализованы**. Все пять
   источников в готовом ПК-клиенте этим этапом не ограничиваются.
 
-Дальше — `PLAN.md`: native audio Android Media3 / iOS AVPlayer, Keychain /
-Keystore session и authenticated native sync, затем пяти-source journey.
+Foreground-мост не является Android Media3/iOS AVPlayer background engine.
+Дальше — `PLAN.md`: background audio, Keychain/Keystore session, authenticated
+native sync и пяти-source device journey. Доступность отдельных provider-треков
+зависит от их upstream; недоступный поток не считается успешно проигранным.
+Логика персонализации и границы сходства с Яндексом — `../MUSIC_PERSONALIZATION.md`.
 
 ## Проверки
 

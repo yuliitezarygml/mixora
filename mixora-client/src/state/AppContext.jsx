@@ -14,6 +14,7 @@ import { pendingHistoryRecords, useHistorySync } from "./useHistorySync.js";
 import { usePlaybackSync } from "./usePlaybackSync.js";
 import { usePlayerPersistence } from "./usePlayerPersistence.js";
 import { useRecommendedPlaylists } from "./useRecommendedPlaylists.js";
+import { useTasteProfile } from "./useTasteProfile.js";
 import { filterRecommendedTracks } from "../lib/recommendedPlaylists.js";
 import {
   pendingPlaylistMutations,
@@ -144,6 +145,7 @@ export function AppProvider({ children }) {
     [waveSettingsOpen, setWaveSettingsOpen] = useState(false);
   const userRef = useRef(null);
   userRef.current = user;
+  const tasteState = useTasteProfile(sessionReady ? user?.id : "", userRef);
   const { library, saveTimer, setStored, storageKey, updateLibrary } =
     useLibraryStorage(user, userRef);
   const waveGeneration = useRef(0),
@@ -154,11 +156,12 @@ export function AppProvider({ children }) {
     heard = useRef(false);
   const wavePreferences = { ...defaultWave, ...settings.wave };
   const recommendations = useRecommendedPlaylists({
-    userId: user?.id,
+    userId: tasteState.ready && !tasteState.open ? user?.id : "",
     library,
     catalog,
     preferences: wavePreferences,
     explicit: settings.explicit,
+    taste: tasteState.profile,
   });
   const audioRef = useRef(null),
     hlsRef = useRef(null),
@@ -461,6 +464,7 @@ export function AppProvider({ children }) {
       round: waveRound.current++,
       explicit: settings.explicit,
       exclude,
+      taste: tasteState.profile,
     });
     const local = () =>
       buildWave(request.seeds, library, preferences, {
@@ -510,6 +514,10 @@ export function AppProvider({ children }) {
     if (!user) {
       pending.current = { wave: { context, preferences } };
       setAuthOpen(true);
+      return;
+    }
+    if (!tasteState.ready || tasteState.open) {
+      pending.current = { wave: { context, preferences } };
       return;
     }
     const generation = ++waveGeneration.current;
@@ -1115,14 +1123,14 @@ export function AppProvider({ children }) {
     resumeRef,
   });
   useEffect(() => {
-    if (user && pending.current) {
+    if (user && tasteState.ready && !tasteState.open && pending.current) {
       const request = pending.current;
       pending.current = null;
       if (request.wave)
         startWave(request.wave.context, request.wave.preferences);
       else play(request.track, request.list);
     }
-  }, [user]);
+  }, [user, tasteState.ready, tasteState.open]);
   useEffect(() => {
     if (!notice) return;
     const t = setTimeout(() => setNotice(""), 4500);
@@ -1374,6 +1382,11 @@ export function AppProvider({ children }) {
     <Context.Provider
       value={{
         user,
+        taste: tasteState.profile,
+        tasteReady: tasteState.ready,
+        tasteOpen: tasteState.open,
+        setTasteOpen: tasteState.setOpen,
+        saveTaste: tasteState.save,
         online,
         waveActive,
         waveBusy,

@@ -51,6 +51,8 @@ type authBackend interface {
 }
 
 type libraryBackend interface {
+	GetTaste(context.Context, string) (library.TasteProfile, error)
+	PutTaste(context.Context, string, library.TasteInput) (library.TasteProfile, error)
 	Get(context.Context, string) (library.Snapshot, error)
 	Put(context.Context, string, json.RawMessage) (library.Snapshot, error)
 	ListTrackPreferences(context.Context, string) ([]library.TrackPreference, error)
@@ -137,6 +139,8 @@ func (s *Server) handler(musicEngine http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/password/request", s.requestPasswordReset)
 	mux.HandleFunc("POST /api/v1/auth/password/reset", s.resetPassword)
 	mux.Handle("GET /api/v1/me", s.requireAuth(http.HandlerFunc(s.me)))
+	mux.Handle("GET /api/v1/me/taste", s.requireAuth(http.HandlerFunc(s.getTaste)))
+	mux.Handle("PUT /api/v1/me/taste", s.requireAuth(http.HandlerFunc(s.putTaste)))
 	mux.Handle("POST /api/v1/me/subscription", s.requireAuth(http.HandlerFunc(s.setSubscription)))
 	mux.Handle("GET /api/v1/library", s.requireAuth(http.HandlerFunc(s.getLibrary)))
 	mux.Handle("PUT /api/v1/library", s.requireAuth(http.HandlerFunc(s.putLibrary)))

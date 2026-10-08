@@ -37,6 +37,6 @@ fn main() {
     }
     println!("cargo:rustc-env=MIXORA_API_URL={origin}");
     let attributes = tauri_build::Attributes::new()
-        .app_manifest(tauri_build::AppManifest::new().commands(&["api_request"]));
+        .app_manifest(tauri_build::AppManifest::new().commands(&["api_request", "prepare_media"]));
     tauri_build::try_build(attributes).expect("Tauri configuration failed");
 }
