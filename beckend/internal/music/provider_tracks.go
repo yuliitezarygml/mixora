@@ -132,7 +132,9 @@ func ytdlpProviderSource(extractor, webpageURL string) string {
 		return "youtube"
 	case host == "bandcamp.com" || strings.HasSuffix(host, ".bandcamp.com"):
 		return "bandcamp"
-	case host == "vk.com" || strings.HasSuffix(host, ".vk.com") || host == "vkvideo.ru" || strings.HasSuffix(host, ".vkvideo.ru"):
+	case host == "vk.com" || strings.HasSuffix(host, ".vk.com") ||
+		host == "vk.ru" || strings.HasSuffix(host, ".vk.ru") ||
+		host == "vkvideo.ru" || strings.HasSuffix(host, ".vkvideo.ru"):
 		return "vk"
 	case providerSourceID.MatchString(host):
 		return host

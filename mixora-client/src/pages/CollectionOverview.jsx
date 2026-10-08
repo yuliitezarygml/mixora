@@ -6,6 +6,7 @@ import { Cover } from "../components/Primitives.jsx";
 import { TrackList } from "../components/Tracks.jsx";
 import { entityKey } from "../lib/library.js";
 import { providerPlaylistTracks } from "../lib/api.js";
+import RecommendedPlaylists from "../components/RecommendedPlaylists.jsx";
 
 function trackCount(count) {
   const form = new Intl.PluralRules("ru").select(count);
@@ -237,6 +238,9 @@ export default function CollectionOverview({ onCreate }) {
       <header className="TextHeader_staticItem__OMNew">
         <div className="CollectionPage_header__z193s">
           <h1>Коллекция</h1>
+          <p className="collection-subtitle muted">
+            У вашей музыки есть <span>цвет</span>
+          </p>
         </div>
       </header>
       <div className="CollectionPage_content__c3f8z">
@@ -245,19 +249,49 @@ export default function CollectionOverview({ onCreate }) {
             className="collection-block"
             aria-labelledby="collection-likes-title"
           >
-            <CollectionHeading
-              title="Мне нравится"
-              to="/mymusic/favorite_tracks"
-              id="collection-likes-title"
-            />
+            <header className="collection-favorites-heading">
+              <Link
+                to="/mymusic/favorite_tracks"
+                className="collection-favorites-cover"
+                aria-label="Открыть любимые треки"
+              >
+                <img
+                  src="/_next/static/media/heart.602389ae.png"
+                  width="56"
+                  height="56"
+                  alt=""
+                />
+              </Link>
+              <div>
+                <h2 id="collection-likes-title">
+                  <Link to="/mymusic/favorite_tracks">
+                    Мне нравится <Icon name="arrowRight_xs" size={24} />
+                  </Link>
+                </h2>
+                <span className="muted">
+                  {trackCount(library.likes.length)}
+                </span>
+              </div>
+            </header>
             {likes.length ? (
-              <div className="collection-likes">
+              <div className="collection-favorite-tracks">
                 <TrackList tracks={likes} columns compact />
               </div>
             ) : (
-              <p className="collection-block-text">
-                Ставьте лайки трекам, и они появятся тут.
-              </p>
+              <div className="collection-empty-likes">
+                <span className="collection-empty-icon">
+                  <Icon name="liked_m" size={28} />
+                </span>
+                <div>
+                  <strong>Сохраните первый любимый трек</strong>
+                  <p className="muted">
+                    Нажимайте на сердечко у музыки, которая вам нравится.
+                  </p>
+                </div>
+                <Link className="secondary" to="/search">
+                  Найти музыку
+                </Link>
+              </div>
             )}
           </section>
 
@@ -272,7 +306,7 @@ export default function CollectionOverview({ onCreate }) {
             />
             {artists.length ? (
               <div className="collection-carousel">
-                {artists.map((artist, index) => (
+                {artists.map((artist) => (
                   <div
                     className="CollectionPlaylists_item__YeviY"
                     key={entityKey(artist)}
@@ -282,7 +316,6 @@ export default function CollectionOverview({ onCreate }) {
                       to={`/artist?id=${encodeURIComponent(artist.id)}&source=${encodeURIComponent(artist.source || "soundcloud")}`}
                     >
                       <span className="artist-cover">
-                        <span className="artist-rank">{index + 1}</span>
                         <Cover track={{ artwork: artist.artwork }} large />
                       </span>
                       <span>{artist.name}</span>
@@ -302,6 +335,7 @@ export default function CollectionOverview({ onCreate }) {
             )}
           </section>
 
+          <RecommendedPlaylists collection />
           <section
             className="CollectionPlaylists_root_withControls__YV7o_ collection-block"
             aria-labelledby="collection-playlists-title"

@@ -1,104 +1,72 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useApp } from "../state/context.js";
 import { duration, trackKey } from "../lib/library.js";
 import Icon from "./Icon.jsx";
 import { Cover, IconButton } from "./Primitives.jsx";
 import FullscreenPlayer from "./FullscreenPlayer.jsx";
+import SoundSettings from "./SoundSettings.jsx";
+import { TrackMenu } from "./Tracks.jsx";
 export default function Player() {
   const a = useApp();
-  const [tint, setTint] = useState("");
-  useEffect(() => {
-    const artwork = a.current?.artwork;
-    if (!artwork) {
-      setTint("");
-      document.documentElement.style.removeProperty("--player-tint");
-      document.documentElement.style.removeProperty(
-        "--player-average-color-background",
-      );
-      return;
-    }
-    let cancelled = false;
-    const image = new Image();
-    image.crossOrigin = "anonymous";
-    image.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = 12;
-      canvas.height = 12;
-      const context = canvas.getContext("2d", { willReadFrequently: true });
-      context.drawImage(image, 0, 0, 12, 12);
-      const pixels = context.getImageData(0, 0, 12, 12).data;
-      let red = 0;
-      let green = 0;
-      let blue = 0;
-      for (let index = 0; index < pixels.length; index += 4) {
-        red += pixels[index];
-        green += pixels[index + 1];
-        blue += pixels[index + 2];
-      }
-      const count = pixels.length / 4;
-      const tone = (channel) => Math.round((channel / count) * 0.48);
-      if (!cancelled) {
-        const color = `rgb(${tone(red)}, ${tone(green)}, ${tone(blue)})`;
-        setTint(color);
-        document.documentElement.style.setProperty("--player-tint", color);
-        document.documentElement.style.setProperty(
-          "--player-average-color-background",
-          color,
-        );
-      }
-    };
-    image.onerror = () => {
-      if (!cancelled) {
-        setTint("");
-        document.documentElement.style.removeProperty("--player-tint");
-        document.documentElement.style.removeProperty(
-          "--player-average-color-background",
-        );
-      }
-    };
-    image.src = artwork;
-    return () => {
-      cancelled = true;
-    };
-  }, [a.current?.artwork]);
+  const [soundOpen, setSoundOpen] = useState(false);
+  const [menuTrack, setMenuTrack] = useState(null);
   const liked =
     a.current &&
     a.library.likes.some((t) => trackKey(t) === trackKey(a.current));
-  const progress = a.length ? Math.min(100, (a.position / a.length) * 100) : 0;
+  const canSeek =
+    Boolean(a.current) && Number.isFinite(a.length) && a.length > 0;
+  const seekPosition =
+    canSeek && Number.isFinite(a.position)
+      ? Math.max(0, Math.min(a.position, a.length))
+      : 0;
+  const progress = canSeek ? (seekPosition / a.length) * 100 : 0;
   return (
     <footer
-      className={`player CommonLayout_playerBar__zXRxq PlayerBarDesktop_root__d2Hwi ${tint ? "player-live" : ""}`}
+      className="player CommonLayout_playerBar__zXRxq PlayerBarDesktop_root__d2Hwi"
       aria-label="Музыкальный плеер"
-      style={tint ? { "--player-tint": tint } : undefined}
+      style={{ "--progress": `${progress}%` }}
     >
-      <div className="player-notch" style={{ "--progress": `${progress}%` }}>
-        <span>{duration(a.position)}</span>
+      <div className="player-progress">
         <input
           aria-label="Позиция воспроизведения"
+          aria-valuetext={`${duration(a.position)} из ${duration(a.length)}`}
           type="range"
           min="0"
-          max={a.length || 1}
-          value={Math.min(a.position, a.length || 1)}
+          max={canSeek ? a.length : 1}
+          value={seekPosition}
           step=".1"
-          disabled={!a.length}
+          disabled={!canSeek}
           onChange={(e) => a.seek(Number(e.target.value))}
         />
-        <span>{duration(a.length || a.current?.duration)}</span>
       </div>
       <div className="player-track PlayerBarDesktop_info__56v53">
         <Cover track={a.current} />
         <div className="player-track-text">
-          <strong>{a.current?.title || "Выберите музыку"}</strong>
+          <div className="player-title-row">
+            <strong>{a.current?.title || "Выберите музыку"}</strong>
+            {a.current && (
+              <IconButton
+                icon="more_xxs"
+                label="Действия с треком"
+                onClick={() => setMenuTrack(a.current)}
+              />
+            )}
+          </div>
           {a.current ? (
             <span>{a.current.artist}</span>
           ) : (
             <span>Треки, которые хочется слушать</span>
           )}
         </div>
-        {a.current && <IconButton icon="more_xxs" label="Действия с треком" />}
       </div>
       <div className="player-center PlayerBarDesktop_sonata__sJHY_">
         <div className="player-buttons BaseSonataControlsDesktop_root__E6wjA SonataControls_root__w8uqu">
+          <IconButton
+            icon="dislike_xs"
+            label="Не нравится текущий трек"
+            onClick={() => a.dislike(a.current)}
+            disabled={!a.current}
+          />
           <IconButton
             icon="shuffle_xs"
             label="Перемешать"
@@ -119,7 +87,7 @@ export default function Player() {
               onClick={() =>
                 a.current ? a.toggle() : a.play(a.catalog[0], a.catalog)
               }
-              disabled={!a.catalog.length}
+              disabled={!a.current && !a.catalog.length}
               aria-busy={a.loading}
             >
               <Icon
@@ -155,7 +123,7 @@ export default function Player() {
       </div>
       <div className="player-tools PlayerBarDesktop_meta__6sm58">
         <IconButton
-          icon="lyrics_xxs"
+          icon="syncLyrics_xs"
           label="Текст трека"
           title=""
           active={a.panel === "lyrics"}
@@ -167,6 +135,13 @@ export default function Player() {
           title=""
           active={a.panel === "queue"}
           onClick={() => a.setPanel(a.panel === "queue" ? null : "queue")}
+        />
+        <IconButton
+          icon="settings_xs"
+          label="Настройки звука"
+          title=""
+          active={soundOpen}
+          onClick={() => setSoundOpen(true)}
         />
         <div className="volume-control">
           <IconButton
@@ -200,6 +175,10 @@ export default function Player() {
           </button>
         </div>
       )}
+      {soundOpen && <SoundSettings onClose={() => setSoundOpen(false)} />}
+      {menuTrack && (
+        <TrackMenu track={menuTrack} onClose={() => setMenuTrack(null)} />
+      )}
     </footer>
   );
 }
@@ -229,7 +208,11 @@ export function PlayerPanel() {
                   key={`${trackKey(t)}-${i}`}
                   className={a.index === i ? "selected" : ""}
                 >
-                  <button onClick={() => a.setIndex(i)}>
+                  <button
+                    className="queue-track"
+                    aria-label={`${a.index === i && a.playing ? "Приостановить" : "Воспроизвести"}: ${t.title}`}
+                    onClick={() => (a.index === i ? a.toggle() : a.setIndex(i))}
+                  >
                     <Cover track={t} />
                     <span>
                       <strong>{t.title}</strong>
@@ -239,6 +222,27 @@ export function PlayerPanel() {
                       name={a.index === i && a.playing ? "pause_xs" : "play_xs"}
                     />
                   </button>
+                  <div className="queue-actions">
+                    <IconButton
+                      icon="arrowDown_xs"
+                      className="icon-button queue-move-up"
+                      label={`Выше в очереди: ${t.title}`}
+                      disabled={i === 0}
+                      onClick={() => a.moveQueue(i, i - 1)}
+                    />
+                    <IconButton
+                      icon="arrowDown_xs"
+                      label={`Ниже в очереди: ${t.title}`}
+                      disabled={i === a.queue.length - 1}
+                      onClick={() => a.moveQueue(i, i + 1)}
+                    />
+                    <IconButton
+                      icon="close_xs"
+                      label={`Удалить из очереди: ${t.title}`}
+                      disabled={i === a.index}
+                      onClick={() => a.removeQueue(i)}
+                    />
+                  </div>
                 </li>
               ))}
             </ol>

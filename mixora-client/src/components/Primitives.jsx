@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Icon from "./Icon.jsx";
 export function IconButton({ icon, label, active = false, ...props }) {
@@ -92,15 +92,18 @@ export function Modal({ title, onClose, children }) {
   );
 }
 export function Cover({ track, large = false }) {
-  return track?.artwork ? (
+  const [failedArtwork, setFailedArtwork] = useState(null);
+  const artwork =
+    typeof track?.artwork === "string"
+      ? track.artwork.replace("-large.", "-t500x500.")
+      : "";
+  return artwork && artwork !== failedArtwork ? (
     <img
       className={`cover ${large ? "large" : ""}`}
-      src={track.artwork.replace("-large.", "-t500x500.")}
+      src={artwork}
       alt=""
       loading="lazy"
-      onError={(e) => {
-        e.currentTarget.style.visibility = "hidden";
-      }}
+      onError={() => setFailedArtwork(artwork)}
     />
   ) : (
     <div className={`cover fallback ${large ? "large" : ""}`}>

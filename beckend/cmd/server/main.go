@@ -342,6 +342,7 @@ func main() {
 		log.Println("  - POST /api/v1/spotify/connect/player/{play|pause|play-pause|next|prev|volume|seek|load}")
 		log.Println("  -- Universal Extractor (YouTube, VK, Bandcamp via yt-dlp) --")
 		log.Println("  - GET  /api/v1/extract?url=<any_supported_url>")
+		log.Println("  - GET  /api/v1/media/stream?url=<any_supported_url>")
 		log.Println("  - GET  /api/v1/youtube/search?q=<query>&limit=5")
 		log.Println("  - GET  /api/v1/youtube/stream?url=<yt_url_or_id>")
 		log.Println("  - GET  /api/v1/bandcamp/resolve?url=<bandcamp_url>")

@@ -3,9 +3,14 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/iulian/soundcloud-go/internal/music"
 	"github.com/iulian/soundcloud-go/pkg/soundcloud"
@@ -15,10 +20,13 @@ import (
 
 // Handler holds the soundcloud, spotify and ytdlp clients and handlers.
 type Handler struct {
-	client  *soundcloud.Client
-	spotify *spotify.Client
-	ytdlp   *ytdlp.Client
-	tracks  TrackObserver
+	client             *soundcloud.Client
+	spotify            *spotify.Client
+	ytdlp              *ytdlp.Client
+	tracks             TrackObserver
+	mediaHTTP          *http.Client
+	extractAudioSource func(context.Context, string) (*ytdlp.AudioSource, error)
+	mediaStreams       chan struct{}
 }
 
 type TrackObserver interface {
@@ -27,11 +35,180 @@ type TrackObserver interface {
 
 // NewHandler creates a new unified API Handler instance.
 func NewHandler(client *soundcloud.Client, spClient *spotify.Client, ytClient *ytdlp.Client) *Handler {
-	return &Handler{
-		client:  client,
-		spotify: spClient,
-		ytdlp:   ytClient,
+	handler := &Handler{
+		client:       client,
+		spotify:      spClient,
+		ytdlp:        ytClient,
+		mediaHTTP:    newMediaHTTPClient(),
+		mediaStreams: make(chan struct{}, 8),
 	}
+	if ytClient != nil {
+		handler.extractAudioSource = ytClient.ExtractAudioSource
+	}
+	return handler
+}
+
+type mediaResolver interface {
+	LookupIPAddr(context.Context, string) ([]net.IPAddr, error)
+}
+
+type mediaDialFunc func(context.Context, string, string) (net.Conn, error)
+
+const (
+	mediaDNSLookupTimeout = 5 * time.Second
+	mediaDialTimeout      = 5 * time.Second
+	mediaIdleIOTimeout    = 30 * time.Second
+	mediaTotalTimeout     = 2 * time.Hour
+)
+
+func newMediaHTTPClient() *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	return newMediaHTTPClientWith(net.DefaultResolver, dialer.DialContext)
+}
+
+func newMediaHTTPClientWith(resolver mediaResolver, dial mediaDialFunc) *http.Client {
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return dialPublicMedia(ctx, network, address, resolver, dial)
+		},
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          32,
+		MaxIdleConnsPerHost:   4,
+		MaxConnsPerHost:       8,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 20 * time.Second,
+		DisableCompression:    true,
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   mediaTotalTimeout,
+		CheckRedirect: func(request *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("too many media redirects")
+			}
+			_, err := validateExtractedAudioURL(request.URL.String())
+			return err
+		},
+	}
+}
+
+type mediaIdleConn struct {
+	net.Conn
+	idle time.Duration
+}
+
+func (c *mediaIdleConn) Read(buffer []byte) (int, error) {
+	_ = c.Conn.SetReadDeadline(time.Now().Add(c.idle))
+	return c.Conn.Read(buffer)
+}
+
+func (c *mediaIdleConn) Write(buffer []byte) (int, error) {
+	_ = c.Conn.SetWriteDeadline(time.Now().Add(c.idle))
+	return c.Conn.Write(buffer)
+}
+
+func dialPublicMedia(ctx context.Context, network, address string, resolver mediaResolver, dial mediaDialFunc) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	lookupCtx, cancelLookup := context.WithTimeout(ctx, mediaDNSLookupTimeout)
+	addresses, err := resolver.LookupIPAddr(lookupCtx, host)
+	cancelLookup()
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	allowed := 0
+	for _, candidate := range addresses {
+		if !publicMediaIP(candidate.IP) {
+			continue
+		}
+		if network == "tcp4" && candidate.IP.To4() == nil {
+			continue
+		}
+		if network == "tcp6" && candidate.IP.To4() != nil {
+			continue
+		}
+		allowed++
+		dialCtx, cancelDial := context.WithTimeout(ctx, mediaDialTimeout)
+		connection, dialErr := dial(dialCtx, network, net.JoinHostPort(candidate.IP.String(), port))
+		cancelDial()
+		if dialErr == nil {
+			return &mediaIdleConn{Conn: connection, idle: mediaIdleIOTimeout}, nil
+		}
+		lastErr = dialErr
+	}
+	if allowed == 0 {
+		return nil, fmt.Errorf("media host has no public address")
+	}
+	return nil, fmt.Errorf("media host connection failed: %w", lastErr)
+}
+
+var blockedMediaNetworks = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("192.88.99.0/24"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("224.0.0.0/4"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("::/128"),
+	netip.MustParsePrefix("::1/128"),
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("2001::/23"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("3fff::/20"),
+	netip.MustParsePrefix("fc00::/7"),
+	netip.MustParsePrefix("fe80::/10"),
+	netip.MustParsePrefix("ff00::/8"),
+}
+
+func publicMediaIP(ip net.IP) bool {
+	address, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	address = address.Unmap()
+	if !address.IsValid() || !address.IsGlobalUnicast() {
+		return false
+	}
+	for _, network := range blockedMediaNetworks {
+		if network.Contains(address) {
+			return false
+		}
+	}
+	return true
+}
+
+func validateExtractedAudioURL(rawURL string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed == nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Opaque != "" {
+		return "", fmt.Errorf("invalid extracted media URL")
+	}
+	if !strings.EqualFold(parsed.Scheme, "https") || parsed.User != nil {
+		return "", fmt.Errorf("unsafe extracted media URL")
+	}
+	if port := parsed.Port(); port != "" && port != "443" {
+		return "", fmt.Errorf("unsafe extracted media port")
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" || strings.HasSuffix(host, ".") || net.ParseIP(host) != nil || host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return "", fmt.Errorf("unsafe extracted media host")
+	}
+	return parsed.String(), nil
 }
 
 // SetTrackObserver lets the app layer index provider-verified results without

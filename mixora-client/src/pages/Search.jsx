@@ -322,7 +322,12 @@ export default function Search() {
             type="button"
             onClick={() => {
               setInput("");
-              setParams({});
+              setParams((previous) => {
+                const next = new URLSearchParams(previous);
+                next.delete("q");
+                next.delete("type");
+                return next;
+              });
             }}
           />
         )}

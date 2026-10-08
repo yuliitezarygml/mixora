@@ -52,6 +52,57 @@ const queueWindow = (current, queue, preferredIndex) => {
 const roundedPosition = (position) =>
   Number.isFinite(position) ? Math.round(position * 10) / 10 : 0;
 
+// A delayed provider resolver can outlive the browser's transient user
+// gesture. In that case the stream is already loaded and only play() must be
+// retried from the next click. Re-resolve only when no source exists or the
+// media element itself rejected that source.
+export function shouldResolvePlayback({ hasSource, mediaError }) {
+  return !hasSource || Boolean(mediaError);
+}
+
+export function playbackSocketURL(locationLike) {
+  const source = locationLike || globalThis.location;
+  const protocol = source?.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${source?.host || ""}/api/v1/playback/ws`;
+}
+
+export function decodePlaybackState(payload) {
+  let message = payload;
+  if (typeof payload === "string") {
+    try {
+      message = JSON.parse(payload);
+    } catch {
+      return null;
+    }
+  }
+  if (
+    !message ||
+    typeof message !== "object" ||
+    message.type !== "state" ||
+    !message.track ||
+    typeof message.track !== "object" ||
+    message.track.id === undefined ||
+    message.track.id === null ||
+    String(message.track.id).trim() === ""
+  ) {
+    return null;
+  }
+  return message;
+}
+
+export function shouldApplyRemotePosition(
+  currentPosition,
+  remotePosition,
+  threshold = 2,
+) {
+  return (
+    Number.isFinite(currentPosition) &&
+    Number.isFinite(remotePosition) &&
+    remotePosition >= 0 &&
+    Math.abs(currentPosition - remotePosition) > threshold
+  );
+}
+
 export function playbackSnapshot(current, playing, position, queue) {
   return {
     type: "state",

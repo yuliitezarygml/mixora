@@ -1,6 +1,6 @@
 # Mixora — генеральный план разработки и миграции
 
-Статус документа: рабочий план, версия 5 от 2026-10-04.
+Статус документа: рабочий план, версия 9 от 2026-10-08.
 
 Этот файл — главная точка входа в проект. Он описывает фактическое состояние
 локальных исходников, целевую архитектуру, порядок миграции интерфейса, контракт
@@ -43,6 +43,11 @@ Mixora — настольный и веб-клиент музыкального 
   эквалайзер, Media Session, экран авторизации и локальная «волна».
 - Большая часть состояния собрана в одном `AppContext.jsx`; это мешает
   независимо развивать авторизацию, каталог, библиотеку и плеер.
+- Playback WebSocket и account-scoped сохранение очереди/позиции вынесены в
+  `usePlaybackSync` и `usePlayerPersistence`; публичный `useApp()` сохранён.
+- Нижний плеер адаптирован по второму скриншоту от 2026-10-08: постоянная
+  жёлтая полоса, центрированные transport-кнопки, dislike/like, очередь,
+  настройки звука и меню трека. Визуальная проверка: `design-qa.md`.
 - В проект перенесены стили и визуальные ресурсы референса, но большинство
   страниц пока являются адаптированными шаблонами, а не полноценными
   пользовательскими сценариями.
@@ -50,9 +55,11 @@ Mixora — настольный и веб-клиент музыкального 
   `/playback/ws`). Музыкальные запросы нужно подключить к фактическому контракту
   готового backend, не вводя новый provider-specific слой.
 - Один source-aware adapter уже объединяет SoundCloud, Spotify preview,
-  YouTube/YouTube Music и разрешённые внешние ссылки VK/Bandcamp. Устойчивая
-  страница источника хранится в библиотеке и очереди; временный CDN URL всегда
-  запрашивается заново и не попадает в persistence.
+  YouTube/YouTube Music и разрешённые внешние ссылки VK/Bandcamp. Поиск VK и
+  Bandcamp на этом этапе работает по URL трека, а Spotify воспроизводит preview
+  только там, где он доступен. Устойчивая страница источника хранится в
+  библиотеке и очереди; временный media URL остаётся внутри серверного
+  same-origin proxy и не попадает в persistence клиента.
 - Electron использует фиксированный loopback-origin `127.0.0.1:5174` и не
   откатывается на случайный порт. Поэтому cookie и origin-scoped storage
   сохраняются между production-запусками; занятый порт приводит к явной ошибке.
@@ -309,7 +316,10 @@ likes/dislikes, историю и собственные плейлисты. П�
 - Клиент передаёт `source:id` и стабильный permalink через единый music
   API-adapter, а способ воспроизведения определяется source-specific adapter-ом.
   SoundCloud legacy, Spotify и yt-dlp provider normalization изолированы там,
-  а не повторяются в компонентах; media URL всегда заново выдаёт engine.
+  а не повторяются в компонентах. Для YouTube/VK/Bandcamp клиент использует
+  защищённый сессией same-origin media proxy: extractor остаётся на сервере,
+  direct media URL не раскрывается и не сохраняется клиентом, а Range-запросы
+  ограничены по размеру, времени и параллелизму с проверкой допустимых адресов.
 
 ### События и рекомендации
 
@@ -427,10 +437,16 @@ empty, error, offline, keyboard и responsive, после чего пишетс�
 - [x] Зафиксировать текущие payload поиска/playback unit-тестами mapper-а.
 - [x] Подключить UI через единый API-модуль без provider credentials.
 - [x] Разделить progressive/HLS по ответу готового engine.
-- [ ] Проверить фактическое воспроизведение в браузере/Electron.
-- [ ] Обработать недоступность engine, сети и конкретного трека.
+- [~] Фактическое воспроизведение в браузере проверено для SoundCloud, YouTube,
+  VK и Bandcamp, а также Spotify preview там, где он доступен; packaged Electron
+  воспроизвёл YouTube Official Audio. Полный desktop smoke пяти источников
+  ещё не выполнен. Для VK/Bandcamp текущий вход — разрешённый URL трека.
+- [x] Обработать недоступность engine, сети и конкретного трека на уровне
+  transport/proxy и автоматических тестов; полный ручной desktop-audit остаётся.
 - [x] Записывать impression/play/30s/complete/skip, repeat-one и значимые seek.
-- [ ] Проверить очередь, next/previous/repeat/shuffle.
+- [~] Browser smoke для `next`, паузы/перемотки, очереди и перестановки треков
+  пройден. React integration-тесты покрывают удаление, previous/repeat/shuffle,
+  resume и синхронизацию; полный ручной desktop-сценарий остаётся.
 
 ### Сценарий C: библиотека и плейлисты
 
@@ -475,6 +491,8 @@ empty, error, offline, keyboard и responsive, после чего пишетс�
 ### Сценарий F: desktop
 
 - [x] Стабильный origin вместо случайного порта.
+- [x] Локальная неподписанная macOS ARM64 `.app` через `npm run desktop:pack`;
+  backend запускается отдельно. Подписанный установщик пока не готов.
 - [ ] Custom protocol и deep links для desktop-ссылок из писем.
 - [ ] Один экземпляр приложения и deep links.
 - [ ] Tray/system media controls.
@@ -487,7 +505,9 @@ empty, error, offline, keyboard и responsive, после чего пишетс�
 `AppContext` делится постепенно, без big-bang переписывания. Уже вынесены
 browser-library persistence, listener event queue, а также независимые
 server/offline synchronizers для preferences, history и playlists; внешний
-контракт `useApp()` при этом сохранён:
+контракт `useApp()` при этом сохранён. Playback WebSocket и persistence также
+выделены в самостоятельные hooks с проверками same-track reorder, remote pause,
+account isolation и сохранения позиции перед закрытием:
 
 - `AuthProvider`: session, profile, login/register/logout.
 - `LibraryProvider`: likes, playlists, history, offline queue mutations.
@@ -586,13 +606,19 @@ app-layer `.env`: music engine сам инкапсулирует свою гот
   history/плейлисты и player snapshot сохраняют permalink, а Spotify в
   браузере воспроизводит только легально доступное preview.
 - [x] Ограничить yt-dlp границей авторизации и allowlist-ом разрешённых HTTPS
-  URL; внедрить timeout и лимит параллельных subprocess-ов. Named Bandcamp
-  endpoint принимает только `/track/…`; album import остаётся будущей задачей.
+  URL; внедрить timeout и лимит параллельных subprocess-ов. Внешнее аудио
+  отдаётся через authenticated same-origin proxy с bounded Range, MIME/DNS/IP
+  проверками, redirect validation и лимитами размера/времени/параллелизма.
+  Named Bandcamp endpoint принимает только `/track/…`; album import остаётся
+  будущей задачей.
 - [x] Проверить timeout, unavailable track, offline и controlled error states:
   transport нормализует network/HTTP failures, yt-dlp не отдаёт stderr клиенту,
   каталог показывает source-aware recovery, а playback retry заново получает
   временную media URL.
-- [ ] Пройти Search → play → next → like → reopen в браузере и Electron.
+- [~] Search → play в браузере пройден для SoundCloud, YouTube, VK, Bandcamp и
+  доступного Spotify preview. Browser `next → like → reopen`, создание
+  плейлиста, добавление трека и reload также пройдены; весь packaged Electron
+  сценарий ещё не пройден.
 
 Критерий: существующая выдача музыки и SoundCloud подтверждена тестами и
 проходит сквозной сценарий; app backend добавляет пользовательские данные, не
@@ -626,6 +652,9 @@ dislike исключает трек, early skip влияет мягко.
 - [x] Вынести browser-library persistence, listener event queue и durable
   synchronizers preferences/history/playlists из `AppContext`, сохранив его
   как совместимый фасад для UI.
+- [x] Выделить playback WebSocket и player persistence; добавить React
+  integration-тесты очереди, resume, account isolation и feedback Wave.
+- [x] Пересобрать нижний плеер по выбранному скриншоту и проверить desktop/mobile.
 - [ ] Продолжить разделение оставшихся auth/catalog/player/Wave-координаторов
   без одновременной замены публичного `useApp()`-контракта.
 - [ ] Заменить хешированные reference-классы semantic-компонентами.
@@ -695,11 +724,32 @@ dislike исключает трек, early skip влияет мягко.
 аккаунтные плейлисты уже реализованы.
 Следующая последовательность:
 
-1. Закончить controlled error/offline-состояния multi-source каталога и вручную
-   проверить Search → play → next → like → reopen для SoundCloud, Spotify
-   preview, YouTube, VK и Bandcamp в браузере и Electron.
-2. Разделить `AppContext`, выделив auth/catalog/library/player sync в узкие
-   state-модули без изменения публичного контракта.
+Срез от 2026-10-08 выполнен: карточки коллекции ограничены по ширине;
+«Для вас», «Открытия», «Для работы» появились на главной и в коллекции.
+Используется существующий `/wave` с server-side history/preferences/Gorse/
+embeddings. Есть пересчёт по вкусовым сигналам, изоляция аккаунтов,
+loading/error/empty, обновление, просмотр, play и сохранение snapshot.
+Лайки и сохранения из открытого preview тоже связаны с impression session.
+Рабочий `.env` подключён к уже установленной локальной EmbeddingGemma.
+Проверены размеры desktop/mobile, 122 client tests, Go recommendation/
+embedding/httpapi tests и browser play/save/reload. Это функциональный этап,
+а не подтверждённая оценка качества музыки: малый подходящий каталог всё ещё
+может давать пересекающиеся rule-only подборки; UI сообщает об этом.
+
+Дизайн-срез по пользовательскому образцу от 11:12 также выполнен:
+подпись заголовка, оригинальная обложка-сердце, реальный счётчик избранного,
+две колонки треков и круглые исполнители; рекомендации перенесены ниже них.
+Убрано влияние старой фиолетовой карточки на список избранного. Подборки имеют
+локальные обложки и ограниченную ширину; ошибка внешней картинки больше не
+оставляет невидимое место. Проверены desktop/mobile и новая Mac ARM64-сборка,
+126/126 client tests; отчёт и исключения — в `design-qa.md`.
+
+1. Повторить уже подтверждённые browser Search → play и
+   next → like → playlist → reopen в packaged Electron. Для VK/Bandcamp
+   проверять URL-based вход и отдельно фиксировать недоступный Spotify preview;
+   дополнительно закрыть UI queue/previous/repeat/shuffle.
+2. Продолжить разделение `AppContext`: playback sync/persistence и durable
+   library уже выделены; следующие узкие модули — auth/catalog/Wave.
 3. Добавить метрики recommendation quality/latency, offline evaluation и
    объяснение причины для отдельного трека.
 4. Реализовать управляемую exploration и cold-start onboarding в UI.
@@ -837,6 +887,65 @@ dislike исключает трек, early skip влияет мягко.
   browser library, listener events, preferences, history и playlists. Очереди,
   user-id fences и внешний фасад не менялись; player/Wave/auth остаются
   следующими отдельными этапами.
+- 2026-10-05: browser smoke подтвердил поиск и воспроизведение SoundCloud,
+  YouTube, VK, Bandcamp и доступного Spotify preview через единый клиентский
+  adapter. VK/Bandcamp пока принимают URL трека, Spotify зависит от наличия
+  preview. Для YouTube/VK/Bandcamp добавлен authenticated same-origin media
+  proxy: direct extractor URL не попадает в клиент, bounded Range и upstream
+  ответы проверяются, SSRF/special-use адреса, небезопасные redirect/MIME,
+  зависшие соединения и избыточный параллелизм ограничены. На момент этого
+  первого прохода next → like → reopen и packaged Electron ещё не проверялись.
+- 2026-10-05: повторный YouTube smoke выявил, что Alpine-пакет `yt-dlp`
+  2025.11.12 отдавал рабочий первый byte-range, но получал `403` при глубокой
+  перемотке. API image переведён на закреплённый стабильный `yt-dlp` 2026.8.19
+  из PyPI с `yt-dlp-ejs` и Node.js runtime. После пересборки same-origin proxy
+  вернул `206` для диапазона с ненулевым start, а браузер продолжил трек с
+  3:30 до 3:48 без playback error. Обновление версии требует повторного smoke
+  пяти источников, а не слепого снятия pin.
+- 2026-10-05: browser stateful smoke подтвердил сохранение лайка после reload,
+  переход `Next` на следующий доступный YouTube-трек, создание аккаунтного
+  плейлиста, добавление YouTube-трека и сохранение содержимого после повторной
+  загрузки страницы. Полная desktop-проверка и queue/previous/repeat/shuffle
+  остаются отдельными пунктами.
+
+- 2026-10-08: playback WebSocket и persistence вынесены из `AppContext`.
+  Исправлены reorder без изменения длины очереди, remote pause/seek после
+  загрузки metadata, немедленное сохранение track/queue и изоляция аккаунтов.
+  Like/dislike Wave отправляют immediate feedback; отказ localStorage не
+  показывается как успешное сохранение.
+- 2026-10-08: нижний плеер перестроен по второму пользовательскому скриншоту.
+  Убрана hover-плашка, добавлены постоянная full-width жёлтая полоса, dislike,
+  рабочее меню трека, настройки звука и действия очереди. Browser smoke:
+  SoundCloud «Утро» играет, pause/seek и reorder работают, меню/эквалайзер
+  открываются. Desktop/mobile visual QA пройден; 105/105 client tests,
+  format/styles/build и неподписанная ARM64 `.app` собраны. YouTube Official
+  Audio ранее воспроизведён в packaged Electron; полный пяти-source desktop
+  journey остаётся, это не означает готовность всего проекта.
+- 2026-10-08: исправлено растягивание карточек коллекции длинными metadata:
+  первая карточка имела 1574 px вместо ограниченного размера; после исправления
+  все artist cards 180 px (desktop) / 148 px (mobile), page overflow отсутствует.
+  Добавлены три рекомендуемых плейлиста, общая загрузка для Home/Collection,
+  фильтры всех пяти источников, отмена устаревших запросов и session feedback.
+  На тестовом аккаунте «Проверка регистрации» сохранён snapshot «Для вас»
+  из 13 треков: воспроизведение и сохранность после reload подтверждены.
+  Исправлен crash компонента до загрузки аккаунта и добавлен regression test.
+  Runtime API ранее не имел embeddings URL: рабочий `.env` исправлен,
+  Docker API перезапущен, local embeddings enabled; индекс 236/236 на момент
+  проверки. Фактический rule-only ответ при текущих языковых ограничениях
+  не маскируется под ML. 122/122 client tests и проверки формата/стилей пройдены;
+  неподписанный Mac ARM64-клиент пересобран. Метрики качества и полный
+  пяти-source packaged journey остаются открытыми пунктами.
+
+- 2026-10-08: коллекция переработана по последнему пользовательскому скриншоту
+  (11:12): оригинальное сердце, подпись «У вашей музыки есть цвет», реальный
+  счётчик, двухколоночный список и исполнители перед рекомендациями. Отдельный
+  CSS-класс устранил конфликт со старой фиолетовой карточкой шириной 500 px.
+  Рекомендации ограничены 220 px desktop / 160 px mobile и используют локальные
+  assets; внешний artwork при ошибке заменяется видимой иконкой. Добавлены
+  четыре регрессии, всего 126/126 client tests. Format/styles/build и Mac ARM64
+  packaging прошли; приложение открыто, пауза и позиция 176.2 s восстановлены.
+  QA охватывает этот дизайн-срез, а не полную готовность сервиса; качество
+  metadata исполнителей и пяти-source packaged journey остаются отдельно.
 
 ## 19. Definition of Done всего проекта
 

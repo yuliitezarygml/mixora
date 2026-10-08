@@ -11,21 +11,24 @@ import (
 )
 
 type rawItem struct {
-	ID          string  `json:"id"`
-	Title       string  `json:"title"`
-	Artist      string  `json:"artist"`
-	Uploader    string  `json:"uploader"`
-	Album       string  `json:"album"`
-	Duration    float64 `json:"duration"`
-	Thumbnail   string  `json:"thumbnail"`
-	WebpageURL  string  `json:"webpage_url"`
-	Extractor   string  `json:"extractor"`
-	URL         string  `json:"url"`
-	Ext         string  `json:"ext"`
-	ACodec      string  `json:"acodec"`
-	ABR         float64 `json:"abr"`
-	ASR         int     `json:"asr"`
-	Description string  `json:"description"`
+	ID          string            `json:"id"`
+	Title       string            `json:"title"`
+	Artist      string            `json:"artist"`
+	Uploader    string            `json:"uploader"`
+	Album       string            `json:"album"`
+	Duration    float64           `json:"duration"`
+	Thumbnail   string            `json:"thumbnail"`
+	WebpageURL  string            `json:"webpage_url"`
+	Extractor   string            `json:"extractor"`
+	URL         string            `json:"url"`
+	Ext         string            `json:"ext"`
+	Protocol    string            `json:"protocol"`
+	HTTPHeaders map[string]string `json:"http_headers"`
+	Filesize    int64             `json:"filesize"`
+	ACodec      string            `json:"acodec"`
+	ABR         float64           `json:"abr"`
+	ASR         int               `json:"asr"`
+	Description string            `json:"description"`
 	Formats     []struct {
 		FormatID   string  `json:"format_id"`
 		URL        string  `json:"url"`
@@ -38,6 +41,19 @@ type rawItem struct {
 		FormatNote string  `json:"format_note"`
 	} `json:"formats"`
 }
+
+// AudioSource is the short-lived progressive audio response selected by
+// yt-dlp. Headers are kept alongside the URL because several provider CDNs
+// bind signed URLs to the extractor's user agent or origin policy.
+type AudioSource struct {
+	URL       string
+	Protocol  string
+	Extension string
+	Headers   map[string]string
+	Size      int64
+}
+
+const progressiveAudioSelector = "ba[protocol^=http][vcodec=none]"
 
 type rawPlaylist struct {
 	ID         string    `json:"id"`
@@ -76,24 +92,51 @@ func (c *Client) Extract(ctx context.Context, mediaURL string) (*models.MediaIte
 	return item, nil
 }
 
-// ExtractAudioURL extracts direct playable CDN audio URL for the given resource.
-func (c *Client) ExtractAudioURL(ctx context.Context, mediaURL string) (string, error) {
+// ExtractAudioSource selects an audio-only progressive response. HLS and DASH
+// manifests are deliberately excluded: proxying only the manifest would leak
+// signed segment URLs back to the browser and fail outside the server context.
+func (c *Client) ExtractAudioSource(ctx context.Context, mediaURL string) (*AudioSource, error) {
 	mediaURL = strings.TrimSpace(mediaURL)
 	if mediaURL == "" {
-		return "", ErrUnsupportedURL
+		return nil, ErrUnsupportedURL
 	}
 
-	out, err := c.runCommand(ctx, "-f", "ba/b", "-g", mediaURL)
+	out, err := c.runCommand(ctx, "-J", "--no-playlist", "-f", progressiveAudioSelector, mediaURL)
+	if err != nil {
+		return nil, err
+	}
+	return parseAudioSource(out)
+}
+
+func parseAudioSource(out []byte) (*AudioSource, error) {
+	var raw rawItem
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parsing yt-dlp audio source: %w", err)
+	}
+	if strings.TrimSpace(raw.URL) == "" {
+		return nil, fmt.Errorf("no progressive audio URL returned")
+	}
+	protocol := strings.ToLower(strings.TrimSpace(raw.Protocol))
+	if protocol != "http" && protocol != "https" {
+		return nil, fmt.Errorf("unsupported audio protocol %q", protocol)
+	}
+	return &AudioSource{
+		URL:       strings.TrimSpace(raw.URL),
+		Protocol:  protocol,
+		Extension: strings.ToLower(strings.TrimSpace(raw.Ext)),
+		Headers:   raw.HTTPHeaders,
+		Size:      raw.Filesize,
+	}, nil
+}
+
+// ExtractAudioURL preserves the older direct-URL API for callers that have not
+// migrated to the same-origin stream proxy.
+func (c *Client) ExtractAudioURL(ctx context.Context, mediaURL string) (string, error) {
+	source, err := c.ExtractAudioSource(ctx, mediaURL)
 	if err != nil {
 		return "", err
 	}
-
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 0 || lines[0] == "" {
-		return "", fmt.Errorf("no direct audio URL returned")
-	}
-
-	return strings.TrimSpace(lines[0]), nil
+	return source.URL, nil
 }
 
 // ExtractPlaylist extracts playlist or album tracks (e.g. Bandcamp album, YouTube playlist).

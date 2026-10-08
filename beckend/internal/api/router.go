@@ -95,6 +95,7 @@ func NewRouter(h *Handler) http.Handler {
 
 	// Universal Extractor (YouTube, VK, Bandcamp, etc. via yt-dlp)
 	mux.HandleFunc("/api/v1/extract", h.UniversalExtractHandler)
+	mux.HandleFunc("/api/v1/media/stream", h.ExternalStreamHandler)
 	mux.HandleFunc("/api/v1/youtube/search", h.YouTubeSearchHandler)
 	mux.HandleFunc("/api/v1/youtube/stream", h.YouTubeStreamHandler)
 	mux.HandleFunc("/api/v1/bandcamp/resolve", h.BandcampResolveHandler)

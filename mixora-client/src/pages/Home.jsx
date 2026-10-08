@@ -6,6 +6,7 @@ import Icon from "../components/Icon.jsx";
 import VibeBackground from "../components/VibeBackground.jsx";
 import { Cover } from "../components/Primitives.jsx";
 import { waveExplanation } from "../lib/wave.js";
+import RecommendedPlaylists from "../components/RecommendedPlaylists.jsx";
 export default function Home() {
   const app = useApp();
   return (
@@ -91,6 +92,7 @@ export default function Home() {
             </Link>
           </div>
         </Section>
+        <RecommendedPlaylists />
         <Section title="Откройте для себя" to="/search">
           <TrackCards tracks={app.catalog.slice(0, 6)} />
         </Section>

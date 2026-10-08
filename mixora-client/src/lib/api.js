@@ -346,6 +346,8 @@ function externalSource(value, webpageURL = "") {
     if (
       host === "vk.com" ||
       host.endsWith(".vk.com") ||
+      host === "vk.ru" ||
+      host.endsWith(".vk.ru") ||
       host === "vkvideo.ru" ||
       host.endsWith(".vkvideo.ru")
     ) {
@@ -607,11 +609,12 @@ export async function providerArtistTracks(artist, signal) {
 export async function providerPlaylistTracks(playlist, signal) {
   const source = String(playlist?.source ?? "soundcloud").toLowerCase();
   if (source === "spotify") {
+    const resource = playlist?.album === true ? "albums" : "playlists";
     const data = await api(
-      `/spotify/playlists/${encodeURIComponent(String(playlist?.id ?? ""))}`,
+      `/spotify/${resource}/${encodeURIComponent(String(playlist?.id ?? ""))}`,
       { signal },
     );
-    return spotifyPlaylist(data).tracks;
+    return spotifyPlaylist(data, { album: playlist?.album === true }).tracks;
   }
   const data = await catalogResource("playlists", playlist?.id, "", signal);
   return soundcloudPlaylist(data).tracks;
@@ -700,10 +703,13 @@ export async function getTrackPlayback(trackOrID, signal) {
       400,
     );
   }
-  const data = await api(`/extract?url=${encodeURIComponent(permalink)}`, {
-    signal,
-  });
-  return normalizeTrackPlayback(data);
+  // Keep short-lived provider CDN URLs on the server. The browser receives a
+  // stable same-origin URL that can be retried with Range requests while the
+  // backend resolves a fresh upstream stream for each media request.
+  return {
+    url: `/api/v1/media/stream?url=${encodeURIComponent(permalink)}`,
+    format: "progressive",
+  };
 }
 export function localTrack(t) {
   return {

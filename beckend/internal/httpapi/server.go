@@ -185,7 +185,7 @@ func (s *Server) protectedMusicEngine(musicEngine http.Handler) http.Handler {
 
 func protectedMusicRoute(path string) (method string, protected bool) {
 	switch path {
-	case "/api/v1/extract", "/api/v1/youtube/search", "/api/v1/youtube/stream", "/api/v1/bandcamp/resolve", "/api/v1/vk/resolve":
+	case "/api/v1/extract", "/api/v1/media/stream", "/api/v1/youtube/search", "/api/v1/youtube/stream", "/api/v1/bandcamp/resolve", "/api/v1/vk/resolve":
 		return http.MethodGet, true
 	case "/api/v1/spotify/connect/status", "/api/v1/spotify/connect/info":
 		return http.MethodGet, true

@@ -1,6 +1,66 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { playbackSnapshot, playerStorageSnapshot } from "./playbackSync.js";
+import {
+  decodePlaybackState,
+  playbackSnapshot,
+  playbackSocketURL,
+  playerStorageSnapshot,
+  shouldApplyRemotePosition,
+  shouldResolvePlayback,
+} from "./playbackSync.js";
+
+test("playback socket follows the page transport", () => {
+  assert.equal(
+    playbackSocketURL({ protocol: "http:", host: "127.0.0.1:5174" }),
+    "ws://127.0.0.1:5174/api/v1/playback/ws",
+  );
+  assert.equal(
+    playbackSocketURL({ protocol: "https:", host: "mixora.example" }),
+    "wss://mixora.example/api/v1/playback/ws",
+  );
+});
+
+test("playback messages reject malformed and incomplete state", () => {
+  assert.equal(decodePlaybackState("{"), null);
+  assert.equal(
+    decodePlaybackState(JSON.stringify({ type: "notification" })),
+    null,
+  );
+  assert.equal(
+    decodePlaybackState(JSON.stringify({ type: "state", playing: true })),
+    null,
+  );
+  assert.equal(
+    decodePlaybackState(
+      JSON.stringify({ type: "state", track: { id: "track-1" } }),
+    )?.track.id,
+    "track-1",
+  );
+});
+
+test("remote position applies only to finite seeks beyond two seconds", () => {
+  assert.equal(shouldApplyRemotePosition(10, Number.NaN), false);
+  assert.equal(shouldApplyRemotePosition(10, -5), false);
+  assert.equal(shouldApplyRemotePosition(Number.POSITIVE_INFINITY, 10), false);
+  assert.equal(shouldApplyRemotePosition(10, 12), false);
+  assert.equal(shouldApplyRemotePosition(10, 12.01), true);
+  assert.equal(shouldApplyRemotePosition(12.01, 10), true);
+});
+
+test("a loaded external stream resumes after autoplay needs a user gesture", () => {
+  assert.equal(
+    shouldResolvePlayback({ hasSource: true, mediaError: false }),
+    false,
+  );
+  assert.equal(
+    shouldResolvePlayback({ hasSource: false, mediaError: false }),
+    true,
+  );
+  assert.equal(
+    shouldResolvePlayback({ hasSource: true, mediaError: true }),
+    true,
+  );
+});
 
 test("playback snapshot keeps one state and a short queue", () => {
   const queue = Array.from({ length: 40 }, (_, i) => ({

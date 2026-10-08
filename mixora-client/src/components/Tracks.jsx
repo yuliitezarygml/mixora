@@ -133,6 +133,8 @@ export function TrackList({
   compact = false,
   emptyText = "Попробуйте другой запрос или выберите музыку в поиске.",
   onActivate,
+  onPlay,
+  showSourceInMetadata = false,
 }) {
   const app = useApp();
   const [menu, setMenu] = useState(null);
@@ -141,7 +143,14 @@ export function TrackList({
     return <Empty title="Треков пока нет" text={emptyText} />;
   return (
     <>
-      <div className={`track-list ${columns ? "track-list-columns" : ""}`}>
+      <div
+        className={`track-list ${columns ? "track-list-columns" : ""}`}
+        style={
+          columns
+            ? { "--track-column-rows": Math.ceil(visible.length / 2) }
+            : undefined
+        }
+      >
         {visible.map((t, i) => {
           const active = app.current && trackKey(t) === trackKey(app.current);
           const playable = t.access !== "blocked";
@@ -161,7 +170,7 @@ export function TrackList({
                   if (active) app.toggle();
                   else {
                     onActivate?.(t);
-                    app.play(t, visible);
+                    (onPlay || app.play)(t, visible);
                   }
                 }}
               >
@@ -178,7 +187,7 @@ export function TrackList({
                   disabled={!playable}
                   onClick={() => {
                     onActivate?.(t);
-                    app.play(t, visible);
+                    (onPlay || app.play)(t, visible);
                   }}
                 >
                   {t.title}
@@ -190,6 +199,9 @@ export function TrackList({
                 >
                   {t.artist}
                 </Link>
+                {showSourceInMetadata && (
+                  <small className="track-origin">{trackSourceLabel(t)}</small>
+                )}
               </div>
               {!compact && (
                 <span className="source-label">{trackSourceLabel(t)}</span>

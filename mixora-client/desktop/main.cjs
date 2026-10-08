@@ -8,6 +8,7 @@ const {
   listenOnDesktopOrigin,
 } = require("./origin.cjs");
 const { isHttpProxyPath } = require("./routing.cjs");
+const { contentSecurityPolicy } = require("./csp.cjs");
 let server, window, origin;
 const root = path.resolve(__dirname, "../dist");
 const types = {
@@ -23,8 +24,6 @@ const types = {
   ".mp4": "video/mp4",
   ".webm": "video/webm",
 };
-const csp =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://*.sndcdn.com data:; media-src 'self' https://*.sndcdn.com https://playback.media-streaming.soundcloud.cloud blob:; connect-src 'self' https://*.sndcdn.com https://playback.media-streaming.soundcloud.cloud; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
 function respond(req, res) {
   let url;
   try {
@@ -85,7 +84,7 @@ function respond(req, res) {
     }
     const headers = {
       "Content-Type": types[path.extname(file)] || "application/octet-stream",
-      "Content-Security-Policy": csp,
+      "Content-Security-Policy": contentSecurityPolicy,
       "X-Content-Type-Options": "nosniff",
       "Accept-Ranges": "bytes",
     };

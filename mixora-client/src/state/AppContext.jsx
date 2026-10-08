@@ -11,6 +11,10 @@ import {
 } from "./libraryStorage.js";
 import { useListeningEvents } from "./useListeningEvents.js";
 import { pendingHistoryRecords, useHistorySync } from "./useHistorySync.js";
+import { usePlaybackSync } from "./usePlaybackSync.js";
+import { usePlayerPersistence } from "./usePlayerPersistence.js";
+import { useRecommendedPlaylists } from "./useRecommendedPlaylists.js";
+import { filterRecommendedTracks } from "../lib/recommendedPlaylists.js";
 import {
   pendingPlaylistMutations,
   usePlaylistSync,
@@ -28,8 +32,8 @@ import {
 } from "../lib/library.js";
 import { dropAccountToken, rememberAccount } from "../lib/accounts.js";
 import {
-  playbackSnapshot,
-  playerStorageSnapshot,
+  shouldApplyRemotePosition,
+  shouldResolvePlayback,
 } from "../lib/playbackSync.js";
 import {
   createHistoryRecord,
@@ -108,7 +112,8 @@ export function AppProvider({ children }) {
     ),
     [panel, setPanel] = useState(null),
     [queue, setQueue] = useState([]),
-    [index, setIndex] = useState(-1);
+    [index, setIndex] = useState(-1),
+    [playerOwner, setPlayerOwner] = useState("");
   const [playing, setPlaying] = useState(false),
     [loading, setLoading] = useState(false),
     [position, setPosition] = useState(0),
@@ -148,6 +153,13 @@ export function AppProvider({ children }) {
     waveTrackSessions = useRef(new Map()),
     heard = useRef(false);
   const wavePreferences = { ...defaultWave, ...settings.wave };
+  const recommendations = useRecommendedPlaylists({
+    userId: user?.id,
+    library,
+    catalog,
+    preferences: wavePreferences,
+    explicit: settings.explicit,
+  });
   const audioRef = useRef(null),
     hlsRef = useRef(null),
     pending = useRef(null),
@@ -271,10 +283,16 @@ export function AppProvider({ children }) {
     setIndex(i);
     setPlaybackError("");
     if (current && trackKey(current) === trackKey(track)) {
-      if (playbackError || audioRef.current?.error || !audioRef.current?.src) {
+      if (
+        shouldResolvePlayback({
+          hasSource: Boolean(audioRef.current?.src),
+          mediaError: audioRef.current?.error,
+        })
+      ) {
         setPlaybackAttempt((attempt) => attempt + 1);
         return;
       }
+      setPlaybackError("");
       audioRef.current
         ?.play()
         .catch(() =>
@@ -285,15 +303,62 @@ export function AppProvider({ children }) {
   const toggle = () => {
     const a = audioRef.current;
     if (!a || !current) return;
-    if (playbackError || a.error || !a.src) {
+    if (
+      shouldResolvePlayback({
+        hasSource: Boolean(a.src),
+        mediaError: a.error,
+      })
+    ) {
       setPlaybackAttempt((attempt) => attempt + 1);
       return;
     }
+    setPlaybackError("");
     if (a.paused) {
       a.play().catch(() =>
         setPlaybackError("Не удалось начать воспроизведение."),
       );
     } else a.pause();
+  };
+  const applyRemotePlayback = (message) => {
+    const list =
+      Array.isArray(message.queue) && message.queue.length
+        ? message.queue
+        : [message.track];
+    if (!current || trackKey(current) !== trackKey(message.track)) {
+      resumeRef.current = {
+        trackKey: trackKey(message.track),
+        position:
+          Number.isFinite(message.position) && message.position >= 0
+            ? message.position
+            : 0,
+        playing: message.playing === true,
+      };
+      play(message.track, list);
+      return;
+    }
+    const allowed = list.filter(
+      (track) =>
+        track &&
+        track.access !== "blocked" &&
+        (settings.explicit || !track.explicit),
+    );
+    const remoteIndex = allowed.findIndex(
+      (track) => trackKey(track) === trackKey(current),
+    );
+    if (remoteIndex >= 0) {
+      setQueue(allowed);
+      setIndex(remoteIndex);
+    }
+    const audio = audioRef.current;
+    if (
+      audio &&
+      shouldApplyRemotePosition(audio.currentTime || 0, message.position)
+    ) {
+      audio.currentTime = message.position;
+      setPosition(message.position);
+    }
+    if (message.playing) audio?.play().catch(() => {});
+    else audio?.pause();
   };
   const retryPlayback = () => {
     if (!current) return;
@@ -359,6 +424,33 @@ export function AppProvider({ children }) {
       setPlaying(false);
       audioRef.current?.pause();
     }
+  };
+  const rememberRecommendedPlaylist = (playlist) => {
+    if (
+      !userRef.current ||
+      playlist.owner !== userRef.current.id ||
+      !playlist.sessionId
+    )
+      return;
+    waveTrackSessions.current = updateWaveTrackSessions(
+      waveTrackSessions.current,
+      playlist.tracks,
+      playlist.sessionId,
+    );
+  };
+  const playRecommendedPlaylist = (playlist, selectedTrack = null) => {
+    if (!userRef.current || playlist.owner !== userRef.current.id) return;
+    const tracks = filterRecommendedTracks(
+      playlist.tracks,
+      library,
+      settings.explicit,
+      playlist.id === "discover",
+    );
+    const track = selectedTrack
+      ? tracks.find((item) => trackKey(item) === trackKey(selectedTrack))
+      : tracks[0];
+    play(track, tracks);
+    if (track) rememberRecommendedPlaylist({ ...playlist, tracks });
   };
   const loadWave = async (preferences, context, exclude = []) => {
     const request = buildWaveRequest({
@@ -461,7 +553,10 @@ export function AppProvider({ children }) {
     const key = trackPreferenceQueueKey(userId);
     const previousQueue = readStorage(key, []);
     const nextQueue = enqueueTrackPreference(previousQueue, mutation);
-    saveStorage(key, nextQueue);
+    if (!saveStorage(key, nextQueue)) {
+      toast("Не удалось сохранить настройку трека на этом устройстве.");
+      return false;
+    }
     // A fresh user action is newer than any browser-local migration candidate
     // for this track and must not be replayed after the queue drains.
     saveStorage(
@@ -485,6 +580,7 @@ export function AppProvider({ children }) {
   const clearTrackPreference = (track) => setTrackPreference(track, "neutral");
   const dislike = (track) => {
     if (!setTrackPreference(track, "disliked")) return;
+    recordEvent("dislike", track);
     if (current && trackKey(current) === trackKey(track)) next(false, true);
     toast("Больше не будем предлагать этот трек в Моей волне");
   };
@@ -563,7 +659,8 @@ export function AppProvider({ children }) {
     const adding = !library.likes.some(
       (saved) => trackKey(saved) === trackKey(track),
     );
-    setTrackPreference(track, adding ? "liked" : "neutral");
+    if (!setTrackPreference(track, adding ? "liked" : "neutral")) return;
+    if (adding) recordEvent("like", track);
   };
   const addQueue = (track) => {
     setQueue((q) => [...q, track]);
@@ -935,14 +1032,27 @@ export function AppProvider({ children }) {
     if (restoredRef.current === id) return;
     restoredRef.current = id;
     const saved = readStorage(`mixora-ui:player:${id}`, null);
-    if (!saved?.track?.id) return;
+    setPlayerOwner(id);
+    if (!saved?.track?.id) {
+      resumeRef.current = null;
+      setQueue([]);
+      setIndex(-1);
+      return;
+    }
     const list =
       Array.isArray(saved.queue) && saved.queue.length
         ? saved.queue
         : [saved.track];
-    resumeRef.current = { position: Number(saved.position) || 0 };
+    const restoredIndex = Math.max(
+      0,
+      Math.min(saved.index || 0, list.length - 1),
+    );
+    resumeRef.current = {
+      trackKey: trackKey(list[restoredIndex]),
+      position: Number(saved.position) || 0,
+    };
     setQueue(list);
-    setIndex(Math.max(0, Math.min(saved.index || 0, list.length - 1)));
+    setIndex(restoredIndex);
   }, [sessionReady, user?.id]);
   useEffect(() => {
     if (!sessionReady || !user?.id) return;
@@ -991,32 +1101,19 @@ export function AppProvider({ children }) {
     waveModelVersion,
     settings.wave,
     waveContext,
-    queue.length,
+    queue,
     index,
   ]);
-  useEffect(() => {
-    if (!sessionReady || !current) return;
-    const id = user?.id || "guest";
-    const timer = setTimeout(() => {
-      saveStorage(
-        `mixora-ui:player:${id}`,
-        playerStorageSnapshot(
-          current,
-          index,
-          audioRef.current?.currentTime || 0,
-          queue,
-        ),
-      );
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [
-    sessionReady,
-    user?.id,
-    current?.id,
+  usePlayerPersistence({
+    enabled: sessionReady && playerOwner === (user?.id || "guest"),
+    userId: user?.id,
+    current,
     index,
-    queue.length,
-    Math.floor(position),
-  ]);
+    queue,
+    position,
+    audioRef,
+    resumeRef,
+  });
   useEffect(() => {
     if (user && pending.current) {
       const request = pending.current;
@@ -1107,21 +1204,27 @@ export function AppProvider({ children }) {
       );
     };
   }, []);
-  const beginPlayback = (audio) => {
+  const beginPlayback = (audio, isActive) => {
     const resume = resumeRef.current;
-    if (resume) {
+    if (resume && resume.trackKey === trackKey(current)) {
       const place = () => {
+        if (!isActive()) return;
         if (Number.isFinite(resume.position))
           audio.currentTime = resume.position;
         setPosition(resume.position || 0);
         setLoading(false);
-        setPlaying(false);
+        if (resume.playing) {
+          audio.play().catch(() => {
+            setPlaybackError("Нажмите «Воспроизвести», чтобы продолжить.");
+          });
+        } else setPlaying(false);
+        if (resumeRef.current === resume) resumeRef.current = null;
       };
       if (audio.readyState >= 1) place();
       else audio.addEventListener("loadedmetadata", place, { once: true });
-      resumeRef.current = null;
-      return;
+      return () => audio.removeEventListener("loadedmetadata", place);
     }
+    resumeRef.current = null;
     audio.play().catch(() => {
       setLoading(false);
       setPlaybackError("Нажмите «Воспроизвести», чтобы продолжить.");
@@ -1132,6 +1235,7 @@ export function AppProvider({ children }) {
     if (!current || !a) return;
     const controller = new AbortController();
     let cancelled = false;
+    let releaseResumeListener;
     a.pause();
     a.removeAttribute("src");
     a.load();
@@ -1157,7 +1261,7 @@ export function AppProvider({ children }) {
             hls.on(Hls.Events.MANIFEST_PARSED, () => {
               if (cancelled) return;
               applyQuality(hls, settingsRef.current.quality);
-              beginPlayback(a);
+              releaseResumeListener = beginPlayback(a, () => !cancelled);
             });
             hls.on(Hls.Events.ERROR, (_, data) => {
               if (data.fatal && !cancelled) {
@@ -1169,13 +1273,13 @@ export function AppProvider({ children }) {
             });
           } else if (a.canPlayType("application/vnd.apple.mpegurl")) {
             a.src = playback.url;
-            beginPlayback(a);
+            releaseResumeListener = beginPlayback(a, () => !cancelled);
           } else {
             throw Error("Этот браузер не поддерживает воспроизведение HLS.");
           }
         } else {
           a.src = playback.url;
-          beginPlayback(a);
+          releaseResumeListener = beginPlayback(a, () => !cancelled);
         }
         if (!cancelled) {
           if ("mediaSession" in navigator) {
@@ -1200,6 +1304,7 @@ export function AppProvider({ children }) {
     })();
     return () => {
       cancelled = true;
+      releaseResumeListener?.();
       controller.abort();
       a.pause();
       hlsRef.current?.destroy();
@@ -1234,75 +1339,15 @@ export function AppProvider({ children }) {
       /* The element can be routed only once. */
     }
   }, [settings.equalizer]);
-  const socketRef = useRef(null);
-  const suppressSync = useRef(0);
-  useEffect(() => {
-    const ws = socketRef.current;
-    if (!user || !current || !ws || ws.readyState !== 1 || suppressSync.current)
-      return;
-    ws.send(
-      JSON.stringify(
-        playbackSnapshot(
-          current,
-          playing,
-          audioRef.current?.currentTime || 0,
-          queue,
-        ),
-      ),
-    );
-  }, [user?.id, current?.id, playing, index, queue.length]);
-  useEffect(() => {
-    if (!user) return;
-    let stopped = false;
-    let retry = 0;
-    let ws;
-    const connect = () => {
-      const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/v1/playback/ws`;
-      ws = new WebSocket(url);
-      socketRef.current = ws;
-      ws.onmessage = (event) => {
-        let msg;
-        try {
-          msg = JSON.parse(event.data);
-        } catch {
-          return;
-        }
-        if (msg?.type !== "state" || !msg.track?.id) return;
-        suppressSync.current += 1;
-        const here = latest.current.current;
-        if (!here || trackKey(msg.track) !== trackKey(here)) {
-          latest.current.play(
-            msg.track,
-            msg.queue?.length ? msg.queue : [msg.track],
-          );
-        }
-        const audio = audioRef.current;
-        if (
-          audio &&
-          Number.isFinite(msg.position) &&
-          Math.abs((audio.currentTime || 0) - msg.position) > 2
-        ) {
-          audio.currentTime = msg.position;
-        }
-        if (msg.playing) audio?.play().catch(() => {});
-        else audio?.pause();
-        setTimeout(() => {
-          suppressSync.current = Math.max(0, suppressSync.current - 1);
-        }, 500);
-      };
-      ws.onclose = () => {
-        if (socketRef.current === ws) socketRef.current = null;
-        if (!stopped) retry = window.setTimeout(connect, 2000);
-      };
-    };
-    connect();
-    return () => {
-      stopped = true;
-      window.clearTimeout(retry);
-      ws?.close();
-      if (socketRef.current === ws) socketRef.current = null;
-    };
-  }, [user?.id]);
+  usePlaybackSync({
+    userId: user?.id,
+    current,
+    playing,
+    index,
+    queue,
+    audioRef,
+    applyRemoteState: applyRemotePlayback,
+  });
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
     const actions = {
@@ -1339,6 +1384,9 @@ export function AppProvider({ children }) {
         waveSettingsOpen,
         setWaveSettingsOpen,
         startWave,
+        recommendations,
+        playRecommendedPlaylist,
+        rememberRecommendedPlaylist,
         recordSearch,
         dislike,
         clearTrackPreference,

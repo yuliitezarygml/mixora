@@ -78,3 +78,24 @@ func TestFromYTDLPUsesStableExtractorOrHostSourceWithoutAudioURL(t *testing.T) {
 		t.Fatalf("host-derived VK source = %q, want vk", source)
 	}
 }
+
+func TestYTDLPProviderSourceNormalizesVKRUHosts(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		extractor  string
+		webpageURL string
+	}{
+		{name: "root host", extractor: "generic", webpageURL: "https://vk.ru/audio-1"},
+		{name: "subdomain", webpageURL: "https://m.vk.ru/audio-1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if source := ytdlpProviderSource(test.extractor, test.webpageURL); source != "vk" {
+				t.Errorf("ytdlpProviderSource(%q, %q) = %q, want vk", test.extractor, test.webpageURL, source)
+			}
+		})
+	}
+}

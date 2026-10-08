@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4174 --strictPort",
     "desktop": "electron .",
+    "desktop:pack": "npm run build && electron-builder --mac dir",
     "test": "node --test src/lib/*.test.js src/state/*.test.js desktop/*.test.cjs",
     "format": "prettier --write src desktop vite.config.js",
     "format:check": "prettier --check src desktop vite.config.js",
@@ -24,7 +25,31 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.7.0",
     "electron": "44.5.0",
+    "electron-builder": "26.15.3",
+    "jsdom": "30.1.2",
     "prettier": "^3.6.2",
     "vite": "^7.0.0"
+  },
+  "build": {
+    "appId": "com.mixora.desktop",
+    "productName": "Mixora",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "desktop/main.cjs",
+      "desktop/preload.cjs",
+      "desktop/origin.cjs",
+      "desktop/routing.cjs",
+      "desktop/csp.cjs",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "identity": null,
+      "target": "dir"
+    }
   }
 }

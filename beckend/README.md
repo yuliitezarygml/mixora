@@ -45,6 +45,11 @@
     конкретной записи зависит от самого провайдера и его прав доступа.
 - **Граница безопасности**: HTTP API не принимает «любой сайт», не ходит к
   localhost/IP и не использует shared provider cookies в обычной конфигурации.
+- **Воспроизведение в браузере**: YouTube, VK и Bandcamp идут через защищённый
+  same-origin proxy `/api/v1/media/stream`. `yt-dlp` выбирает только
+  progressive audio-only поток, а краткоживущий подписанный CDN URL не
+  передаётся клиенту. Proxy проверяет DNS/IP на каждом redirect, ограничивает
+  число и время стримов и отдаёт аудио небольшими Range-частями.
 
 ---
 
@@ -387,6 +392,7 @@ docker compose exec postgres sh -lc \
 | Метод | Эндпоинт | Описание |
 |---|---|---|
 | `GET` | `/api/v1/extract?url=<url>` | 🔒 Разрешённый HTTPS URL YouTube/YouTube Music, Bandcamp `/track/…`, VK/VK Video media; возвращает metadata и краткоживущую media-ссылку |
+| `GET` | `/api/v1/media/stream?url=<url>` | 🔒 Same-origin progressive audio proxy для разрешённого YouTube/Bandcamp/VK URL; поддерживает single Range и не раскрывает CDN URL |
 | `GET` | `/api/v1/youtube/search?q=<query>&limit=5` | 🔒 Поиск треков на YouTube / YouTube Music |
 | `GET` | `/api/v1/youtube/stream?url=<yt_url>` или `?id=<video_id>` | 🔒 Извлечение краткоживущего аудио-стрима YouTube |
 | `GET` | `/api/v1/bandcamp/resolve?url=<bc_url>` | 🔒 Резолв одного разрешённого Bandcamp-трека |
@@ -394,8 +400,9 @@ docker compose exec postgres sh -lc \
 
 Ошибки extractor-а намеренно не возвращают stderr `yt-dlp`: ошибка внешнего
 источника — `502`, недоступный extractor — `503`, deadline — `504`. Клиент
-повторяет воспроизведение по сохранённому permalink и получает новую временную
-media-ссылку, а не хранит или переиспользует старую CDN URL.
+повторяет воспроизведение по сохранённому permalink через `/media/stream`;
+новая временная CDN URL остаётся только внутри backend и не попадает в
+состояние приложения или браузерное хранилище.
 
 ---
 
@@ -439,7 +446,11 @@ go run ./cmd/cli lyrics "https://soundcloud.com/user/track-name"
 * **ffmpeg** *(опционально для медиа-обработки)*: `brew install ffmpeg` (macOS) или `sudo apt install ffmpeg` (Linux).
 * **go-librespot** *(опционально для Spotify Connect)*: `brew install go-librespot`.
 
-`yt-dlp` входит в API Docker image. `go-librespot` намеренно не входит: Spotify
+API Docker image устанавливает закреплённый стабильный `yt-dlp` из PyPI вместе
+с JavaScript runtime, чтобы YouTube-подписи и byte-range перемотка не зависели
+от устаревшего пакета Alpine. Версия задаётся `YT_DLP_VERSION` в
+`beckend/Dockerfile` и должна регулярно обновляться после provider smoke-теста.
+`go-librespot` намеренно не входит: Spotify
 Connect остаётся дополнительной локальной интеграцией и требует отдельной
 настройки демона.
 

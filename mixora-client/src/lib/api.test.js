@@ -8,6 +8,7 @@ import {
   normalizeTrackPlayback,
   canonicalTrackReference,
   externalTrack,
+  providerPlaylistTracks,
   searchCatalog,
   searchSpotifyCatalog,
   searchYouTubeCatalog,
@@ -326,6 +327,45 @@ test("adapts Spotify and universal extractor results into provider-neutral track
     }).source,
     "vk",
   );
+  assert.equal(
+    externalTrack({
+      id: "vk-ru-1",
+      title: "VK RU track",
+      extractor: "generic",
+      webpage_url: "https://m.vk.ru/audio-1_2",
+    }).source,
+    "vk",
+  );
+});
+
+test("Spotify album playback loads the album route", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    return new Response(
+      JSON.stringify({
+        success: true,
+        data: {
+          id: "album-1",
+          name: "Album",
+          tracks: [{ id: "track-1", title: "Track" }],
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+  try {
+    const tracks = await providerPlaylistTracks({
+      id: "album-1",
+      source: "spotify",
+      album: true,
+    });
+    assert.equal(tracks[0].id, "track-1");
+    assert.deepEqual(calls, ["/api/v1/spotify/albums/album-1"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("uses provider-specific routes for Spotify, YouTube and universal links", async () => {
@@ -388,13 +428,16 @@ test("uses provider-specific routes for Spotify, YouTube and universal links", a
     assert.equal(youtube[0].source, "youtube");
     assert.equal(bandcamp.source, "bandcamp");
     assert.equal(spotifyPlayback.url, "https://cdn.example/preview.mp3");
-    assert.equal(externalPlayback.url, "https://cdn.example/track.m4a");
+    assert.equal(
+      externalPlayback.url,
+      "/api/v1/media/stream?url=https%3A%2F%2Fartist.bandcamp.com%2Ftrack%2Ftest",
+    );
+    assert.equal(externalPlayback.format, "progressive");
     assert.deepEqual(calls, [
       "/api/v1/spotify/search?q=test&type=track&limit=40",
       "/api/v1/youtube/search?q=test&limit=25",
       "/api/v1/extract?url=https%3A%2F%2Fartist.bandcamp.com%2Ftrack%2Ftest",
       "/api/v1/spotify/tracks/sp-1/stream",
-      "/api/v1/extract?url=https%3A%2F%2Fartist.bandcamp.com%2Ftrack%2Ftest",
     ]);
   } finally {
     globalThis.fetch = originalFetch;

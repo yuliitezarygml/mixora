@@ -120,12 +120,19 @@ func TestAppAPIContract(t *testing.T) {
 	})
 
 	t.Run("extractor and Connect routes require a session and exact methods", func(t *testing.T) {
-		response := request(t, &http.Client{}, http.MethodGet, server.URL+"/api/v1/extract?url=https://www.youtube.com/watch?v=jNQXAC9IVRw", nil)
-		assertStatus(t, response, http.StatusUnauthorized)
-		closeResponse(t, response)
-
 		for _, path := range []string{
 			"/api/v1/extract?url=https://www.youtube.com/watch?v=jNQXAC9IVRw",
+			"/api/v1/media/stream?url=https://www.youtube.com/watch?v=jNQXAC9IVRw",
+		} {
+			response := request(t, &http.Client{}, http.MethodGet, server.URL+path, nil)
+			assertStatus(t, response, http.StatusUnauthorized)
+			closeResponse(t, response)
+		}
+
+		var response *http.Response
+		for _, path := range []string{
+			"/api/v1/extract?url=https://www.youtube.com/watch?v=jNQXAC9IVRw",
+			"/api/v1/media/stream?url=https://www.youtube.com/watch?v=jNQXAC9IVRw",
 			"/api/v1/youtube/search?q=fixture",
 			"/api/v1/youtube/stream?id=jNQXAC9IVRw",
 			"/api/v1/bandcamp/resolve?url=https://artist.bandcamp.com/track/fixture",
@@ -145,6 +152,13 @@ func TestAppAPIContract(t *testing.T) {
 		assertStatus(t, response, http.StatusMethodNotAllowed)
 		if response.Header.Get("Allow") != http.MethodGet {
 			t.Fatalf("extract Allow = %q, want GET", response.Header.Get("Allow"))
+		}
+		closeResponse(t, response)
+
+		response = request(t, client, http.MethodPost, server.URL+"/api/v1/media/stream", nil)
+		assertStatus(t, response, http.StatusMethodNotAllowed)
+		if response.Header.Get("Allow") != http.MethodGet {
+			t.Fatalf("media stream Allow = %q, want GET", response.Header.Get("Allow"))
 		}
 		closeResponse(t, response)
 
