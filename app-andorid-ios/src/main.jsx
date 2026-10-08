@@ -27,40 +27,16 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-function NativeApp() {
-  const [ready, setReady] = React.useState(!isTauri());
-  return ready ? (
-    <HashRouter>
-      <AppProvider>
-        <App />
-      </AppProvider>
-    </HashRouter>
-  ) : (
-    <main className="native-intro">
-      <p className="native-label">Tauri 2 · тестовая сборка</p>
-      <h1>Mixora Mobile</h1>
-      <p>Общий интерфейс Mixora и подключение к вашему серверу.</p>
-      <p>
-        Аккаунт и поиск используют нативную сессию. После закрытия приложения
-        потребуется повторный вход.
-      </p>
-      <p>
-        Фоновый звук, потоки YouTube/VK/Bandcamp и синхронизация плеера между
-        устройствами пока в разработке. Для них сохранён текущий ПК-клиент.
-      </p>
-      <button className="primary" onClick={() => setReady(true)}>
-        Открыть приложение
-      </button>
-    </main>
-  );
-}
-
 if (isTauri()) configureClientRuntime(createMobileAPI(invoke));
 const root =
   import.meta.hot?.data.root ?? createRoot(document.getElementById("root"));
 if (import.meta.hot) import.meta.hot.data.root = root;
 root.render(
   <ErrorBoundary>
-    <NativeApp />
+    <HashRouter>
+      <AppProvider>
+        <App />
+      </AppProvider>
+    </HashRouter>
   </ErrorBoundary>,
 );

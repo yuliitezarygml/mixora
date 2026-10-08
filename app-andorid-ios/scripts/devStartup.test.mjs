@@ -11,7 +11,9 @@ test("dev startup loads api.json as a module while API requests reach the backen
     requests.push(request.url);
     response.setHeader("Content-Type", "application/json");
     response.statusCode = request.url === "/api/v1/auth/session" ? 401 : 404;
-    response.end(JSON.stringify({ success: false, error: "Not authenticated" }));
+    response.end(
+      JSON.stringify({ success: false, error: "Not authenticated" }),
+    );
   });
   backend.listen(0, "127.0.0.1");
   await once(backend, "listening");
@@ -44,7 +46,11 @@ test("dev startup loads api.json as a module while API requests reach the backen
   const origin = `http://127.0.0.1:${vite.httpServer.address().port}`;
 
   const settings = await fetch(`${origin}/api.json?import`);
-  assert.equal(settings.status, 200, "api.json must not be proxied to the backend");
+  assert.equal(
+    settings.status,
+    200,
+    "api.json must not be proxied to the backend",
+  );
   assert.match(settings.headers.get("content-type"), /javascript/);
   assert.match(await settings.text(), /export default/);
   assert.deepEqual(requests, [], "frontend modules never reach the backend");
