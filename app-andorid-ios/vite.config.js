@@ -15,7 +15,9 @@ export default defineConfig(({ mode }) => {
   const apiOrigin = process.env.MIXORA_API_URL || config.serverUrl;
   const host = process.env.TAURI_DEV_HOST || env.TAURI_DEV_HOST || "127.0.0.1";
   const proxy = {
-    "/api": {
+    // Vite matches prefixes: "/api" also captures the frontend api.json module.
+    // Keep server routes separate from the central, bundled configuration file.
+    "/api/": {
       target: apiOrigin,
       changeOrigin: true,
       ws: true,
