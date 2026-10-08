@@ -1,8 +1,5 @@
 import { useEffect, useRef } from "react";
-import {
-  decodePlaybackState,
-  playbackSnapshot,
-} from "../lib/playbackSync.js";
+import { decodePlaybackState, playbackSnapshot } from "../lib/playbackSync.js";
 import { createPlaybackSocket } from "../lib/clientRuntime.js";
 
 const RECONNECT_DELAY_MS = 2000;

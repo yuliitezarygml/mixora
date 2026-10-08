@@ -7,23 +7,31 @@ function invokeWithAbort(invoke, command, args, signal) {
   return new Promise((resolve, reject) => {
     const abort = () => reject(abortError());
     signal?.addEventListener("abort", abort, { once: true });
-    Promise.resolve().then(() => {
-      if (signal?.aborted) throw abortError();
-      return invoke(command, args);
-    }).then(resolve, reject).finally(() => signal?.removeEventListener("abort", abort));
+    Promise.resolve()
+      .then(() => {
+        if (signal?.aborted) throw abortError();
+        return invoke(command, args);
+      })
+      .then(resolve, reject)
+      .finally(() => signal?.removeEventListener("abort", abort));
   });
 }
 
 export function createNativeTransport(invoke) {
   return {
     async request(path, options = {}) {
-      const result = await invokeWithAbort(invoke, "api_request", {
-        request: {
-          path,
-          method: options.method || "GET",
-          body: options.body ?? null,
+      const result = await invokeWithAbort(
+        invoke,
+        "api_request",
+        {
+          request: {
+            path,
+            method: options.method || "GET",
+            body: options.body ?? null,
+          },
         },
-      }, options.signal);
+        options.signal,
+      );
       return new Response(result.status === 204 ? null : result.body, {
         status: result.status,
         headers: { "Content-Type": "application/json" },
@@ -31,7 +39,9 @@ export function createNativeTransport(invoke) {
     },
     async preparePlayback(playback) {
       if (playback.url.startsWith("/api/")) {
-        const error = new Error("Для этого источника ещё подключается нативный плеер. Откройте трек в текущем ПК-клиенте.");
+        const error = new Error(
+          "Для этого источника ещё подключается нативный плеер. Откройте трек в текущем ПК-клиенте.",
+        );
         error.name = "ApiError";
         error.status = 501;
         throw error;

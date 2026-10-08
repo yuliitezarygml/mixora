@@ -14,7 +14,17 @@ body {
   gap: 20px;
   color: #f3f3f3;
 }
-.native-intro h1 { font-size: 38px; }
-.native-intro p { line-height: 1.5; color: #aaa; }
-.native-intro .native-label { color: #ffdc26; }
-.native-intro .primary { margin-top: 8px; align-self: flex-start; }
+.native-intro h1 {
+  font-size: 38px;
+}
+.native-intro p {
+  line-height: 1.5;
+  color: #aaa;
+}
+.native-intro .native-label {
+  color: #ffdc26;
+}
+.native-intro .primary {
+  margin-top: 8px;
+  align-self: flex-start;
+}

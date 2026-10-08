@@ -16,11 +16,19 @@ export default defineConfig(({ mode }) => {
   const host = process.env.TAURI_DEV_HOST || env.TAURI_DEV_HOST || "127.0.0.1";
   const proxy = {
     "/api": {
-      target: apiOrigin, changeOrigin: true, ws: true,
+      target: apiOrigin,
+      changeOrigin: true,
+      ws: true,
       configure(server) {
         const stripLocalOrigin = (request) => {
           // Only this dev server's own origin is stripped, not arbitrary sites.
-          if ([`http://${host}:${port}`, `http://localhost:${port}`, "http://127.0.0.1:4176"].includes(request.getHeader("origin"))) {
+          if (
+            [
+              `http://${host}:${port}`,
+              `http://localhost:${port}`,
+              "http://127.0.0.1:4176",
+            ].includes(request.getHeader("origin"))
+          ) {
             request.removeHeader("origin");
           }
         };
@@ -31,15 +39,28 @@ export default defineConfig(({ mode }) => {
   };
   return {
     root: appRoot,
-    plugins: [react(), {
-      name: "mixora-shared-reference-styles",
-      transformIndexHtml: { order: "pre", handler: () => sharedStyleTags(readFileSync(`${clientRoot}/index.html`, "utf8")) },
-    }],
+    plugins: [
+      react(),
+      {
+        name: "mixora-shared-reference-styles",
+        transformIndexHtml: {
+          order: "pre",
+          handler: () =>
+            sharedStyleTags(readFileSync(`${clientRoot}/index.html`, "utf8")),
+        },
+      },
+    ],
     publicDir: `${clientRoot}/public`,
-    resolve: { dedupe: ["react", "react-dom", "react-router", "react-router-dom"] },
+    resolve: {
+      dedupe: ["react", "react-dom", "react-router", "react-router-dom"],
+    },
     server: {
-      host, port, strictPort: true,
-      ...(host !== "127.0.0.1" ? { hmr: { protocol: "ws", host, port: 5177 } } : {}),
+      host,
+      port,
+      strictPort: true,
+      ...(host !== "127.0.0.1"
+        ? { hmr: { protocol: "ws", host, port: 5177 } }
+        : {}),
       fs: { allow: [workspace] },
       proxy,
       watch: { ignored: ["**/src-tauri/**"] },

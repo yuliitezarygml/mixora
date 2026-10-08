@@ -100,7 +100,7 @@ fn requests_cannot_escape_the_api_or_supply_non_json_bodies() {
 }
 
 #[tokio::test]
-async fn cookie_stays_in_rust_and_logout_clears_it_even_when_server_is_unavailable() {
+async fn cookie_stays_in_rust_and_local_session_reset_does_not_need_server_logout() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
@@ -139,4 +139,97 @@ async fn cookie_stays_in_rust_and_logout_clears_it_even_when_server_is_unavailab
     backend.clear_session().await.unwrap();
     backend.request(request("/api/v1/me")).await.unwrap();
     server.await.unwrap();
+}
+
+async fn fixture_backend_response(response: String) -> (Backend, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = vec![0; 8192];
+        stream.read(&mut request).await.unwrap();
+        let _ = stream.write_all(response.as_bytes()).await;
+    });
+    (Backend::new(&origin, true).unwrap(), server)
+}
+
+#[tokio::test]
+async fn redirect_is_not_followed_or_exposed_to_renderer() {
+    let (backend, server) = fixture_backend_response(
+        "HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/fixture-secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
+    ).await;
+    let error = backend
+        .request(ApiRequest {
+            path: "/api/v1/me".into(),
+            method: "GET".into(),
+            body: None,
+        })
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error, "API redirect запрещён");
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn oversized_response_is_rejected_before_reading_the_body() {
+    let (backend, server) = fixture_backend_response(format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        MAX_RESPONSE_BYTES + 1,
+    ))
+    .await;
+    let error = backend
+        .request(ApiRequest {
+            path: "/api/v1/me".into(),
+            method: "GET".into(),
+            body: None,
+        })
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error, "Ответ API слишком большой");
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn offline_logout_replaces_the_private_cookie_jar() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    drop(listener); // no server accepts the logout
+    let backend = Backend::new(&origin, true).unwrap();
+    let previous = backend.client.read().await.clone();
+    let error = backend
+        .request(ApiRequest {
+            path: "/api/v1/auth/logout".into(),
+            method: "POST".into(),
+            body: None,
+        })
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error, "Не удалось связаться с сервером");
+    // Client Debug contains an Arc identity; compare before/after to prove the
+    // session was replaced, without ever reading or displaying cookie values.
+    assert_ne!(
+        format!("{previous:?}"),
+        format!("{:?}", backend.client.read().await)
+    );
+}
+
+#[tokio::test]
+#[ignore = "read-only smoke against the running local Mixora backend"]
+async fn live_backend_anonymous_session_returns_the_existing_auth_contract() {
+    let backend = Backend::new(env!("MIXORA_API_URL"), cfg!(debug_assertions)).unwrap();
+    let response = backend
+        .request(ApiRequest {
+            path: "/api/v1/auth/session".into(),
+            method: "GET".into(),
+            body: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(response.status, 401);
+    let value: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+    assert!(value.get("error").is_some());
+    assert!(!response.body.contains("mixora_session="));
 }

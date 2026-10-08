@@ -7,7 +7,9 @@ let runtime = {};
 export function configureClientRuntime(adapter) {
   const previous = runtime;
   runtime = adapter || {};
-  return () => { runtime = previous; };
+  return () => {
+    runtime = previous;
+  };
 }
 
 export function clientRequest(url, options) {

@@ -708,10 +708,13 @@ export async function getTrackPlayback(trackOrID, signal) {
   // Keep short-lived provider CDN URLs on the server. The browser receives a
   // stable same-origin URL that can be retried with Range requests while the
   // backend resolves a fresh upstream stream for each media request.
-  return prepareClientPlayback({
-    url: `/api/v1/media/stream?url=${encodeURIComponent(permalink)}`,
-    format: "progressive",
-  }, signal);
+  return prepareClientPlayback(
+    {
+      url: `/api/v1/media/stream?url=${encodeURIComponent(permalink)}`,
+      format: "progressive",
+    },
+    signal,
+  );
 }
 export function localTrack(t) {
   return {
